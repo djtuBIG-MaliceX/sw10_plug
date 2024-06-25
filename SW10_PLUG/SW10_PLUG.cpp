@@ -2,14 +2,7 @@
 #include "IPlug_include_in_plug_src.h"
 #include "LFO.h"
 #include "timeapi.h"
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 #include "VLSG.h"
-#ifdef __cplusplus
-}
-#endif
 
 static const char* arg_rom = "ROMSXGM.BIN";
 
@@ -89,6 +82,7 @@ static uint8_t* load_rom_file(const char* romname)
   FILE* f;
   uint8_t* mem;
 
+  handleDllPath();
   f = fopen(romname, "rb");
   if (f == NULL)
   {
@@ -165,7 +159,7 @@ static void stop_synth(void)
 
 
 SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
-: Plugin(info, MakeConfig(kNumParams, kNumPresets))
+: iplug::Plugin(info, MakeConfig(kNumParams, kNumPresets))
 {
   start_synth();
 

@@ -62,7 +62,6 @@ extern "C"
 
 typedef int VLSG_Bool;
 
-
 enum ParameterType
 {
     PARAMETER_OutputBuffer  = 1,
