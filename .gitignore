@@ -9,3 +9,6 @@ build-*
 */.vs
 *.pem
 mkcert*
+
+ROMSXGM.BIN
+aeffect*.h
