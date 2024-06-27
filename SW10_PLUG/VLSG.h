@@ -111,8 +111,8 @@ VLSG_API_(VLSG_Bool) VLSG_Exit(void);
 VLSG_PFN_(void, VLSG_WRITE)(const void* data, uint32_t len);
 VLSG_API_(void) VLSG_Write(const void* data, uint32_t len);
 
-VLSG_PFN_(int32_t, VLSG_BUFFER)(uint32_t output_buffer_counter, int nFrames);
-VLSG_API_(int32_t) VLSG_Buffer(uint32_t output_buffer_counter, int nFrames);
+VLSG_PFN_(int32_t, VLSG_BUFFER)(uint32_t output_buffer_counter);
+VLSG_API_(int32_t) VLSG_Buffer(uint32_t output_buffer_counter);
 
 // Invasive workaround
 VLSG_API_(int32_t) VLSG_BufferVst(uint32_t output_buffer_counter, double** output, int nFrames);

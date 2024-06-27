@@ -8,7 +8,7 @@ static const char* arg_rom = "ROMSXGM.BIN";
 static uint32_t outbuf_counter;
 
 static uint8_t* rom_address;
-//static uint8_t wav_buffer[65536];  // NOTE: SAMPLES ARE int16_t stereo interleaved!
+static uint8_t wav_buffer[65536];  // NOTE: SAMPLES ARE int16_t stereo interleaved!
 
 static unsigned int timediv;
 
@@ -140,9 +140,9 @@ static int start_synth(void)
   VLSG_SetParameter(PARAMETER_ROMAddress, (uintptr_t)rom_address);
 
   // set output buffer - not used as being used from IPlug2 directly
-  /*outbuf_counter = 0;
+  outbuf_counter = 0;
   memset(wav_buffer, 0, 65536);
-  VLSG_SetParameter(PARAMETER_OutputBuffer, (uintptr_t)wav_buffer);*/
+  VLSG_SetParameter(PARAMETER_OutputBuffer, (uintptr_t)wav_buffer);
 
   // start playback
   VLSG_PlaybackStart();
@@ -248,16 +248,30 @@ SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
 void SW10_PLUG::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 {
   //mDSP.ProcessBlock(nullptr, outputs, 2, nFrames, mTimeInfo.mPPQPos, mTimeInfo.mTransportIsRunning);
+  static int renderedSampleQueueSize = 0;
+  static uint16_t renderOffset = 0;
 
-  VLSG_BufferVst(outbuf_counter, outputs, nFrames);
-  outbuf_counter += nFrames;
+  // Attempt 1 - directly render as requested to output buffer (without respecting internal timer code)
+  //VLSG_BufferVst(outbuf_counter, outputs, nFrames);
+  //outbuf_counter++;
 
-  // CBF aligning the pcm writes to the on-demand frame shifts.
-  /*for (int i = 0, j = 0; j < nFrames; ) {
-    outputs[0][j] = (((int16_t*)wav_buffer)[(outbuf_counter + i++) & 32767]) / 32768.0;
-    outputs[1][j++] = (((int16_t*)wav_buffer)[(outbuf_counter + i++) & 32767]) / 32768.0;
+  // Attempt 2 - render the chunks based on existing hard-coded sample sizes, but only dequeue on demand.
+  if (renderedSampleQueueSize <= 0) {
+    VLSG_Buffer(outbuf_counter);
+    renderedSampleQueueSize += 1024;  //outbuf_size_para (uint8_t)
     ++outbuf_counter;
-  }*/
+  }
+
+  for (int sampleIdx = 0, frameIdx = 0; frameIdx < nFrames; ) {
+    if (renderedSampleQueueSize <= 0) {
+      VLSG_Buffer(outbuf_counter);
+      renderedSampleQueueSize += 1024;
+      ++outbuf_counter;
+    }
+    outputs[0][frameIdx] = (((int16_t*)wav_buffer)[renderOffset++ & 32767]) / 32768.0;
+    outputs[1][frameIdx++] = (((int16_t*)wav_buffer)[renderOffset++ & 32767]) / 32768.0;
+    --renderedSampleQueueSize;
+  }
   
   mMeterSender.ProcessBlock(outputs, nFrames, kCtrlTagMeter);
 }
@@ -265,12 +279,12 @@ void SW10_PLUG::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 void SW10_PLUG::OnIdle()
 {
   mMeterSender.TransmitData(*this);
-  mLFOVisSender.TransmitData(*this);
+  //mLFOVisSender.TransmitData(*this);
 }
 
 void SW10_PLUG::OnReset()
 {
-  mDSP.Reset(GetSampleRate(), GetBlockSize());
+  //mDSP.Reset(GetSampleRate(), GetBlockSize());
   mMeterSender.Reset(GetSampleRate());
 }
 
@@ -355,25 +369,6 @@ void SW10_PLUG::ProcessMidiMsg(const IMidiMsg& msg)
     break;
   }
 
-
-    /** TODO: does IPlug support 14-bit CCs?
-    if (event->data.control.param >= 0 && event->data.control.param < 32)
-    {
-      data[0] = 0xB0 | event->data.control.channel;
-      data[1] = event->data.control.param;
-      data[2] = (event->data.control.value >> 7) & 0x7f;
-      data[3] = event->data.control.param + 32;
-      data[4] = event->data.control.value & 0x7f;
-      length = 5;
-
-      lsgWrite(data, length);
-    }
-
-    printf("Controller 14-bit, channel:%d param:%d value:%d\n", chan, key, vel);
-    SendMidiMsg(msg);
-    break;
-    */
-
   case IMidiMsg::kProgramChange:
     data[0] = 0xC0 | chan;
     data[1] = prog;
@@ -397,6 +392,7 @@ void SW10_PLUG::ProcessMidiMsg(const IMidiMsg& msg)
     SendMidiMsg(msg);
     break;
   }
+
   case IMidiMsg::kPitchWheel: {
     auto pbVal = msg.PitchWheel();
     int pbValInt = (int)(pbVal * 8192) + 8192;
@@ -405,7 +401,7 @@ void SW10_PLUG::ProcessMidiMsg(const IMidiMsg& msg)
       pbValInt = 16383;
     }
     else if (pbValInt < 0) {
-      pbValInt = -8192;
+      pbValInt = 0;
     }
 
     data[0] = 0xE0 | chan;
@@ -418,54 +414,12 @@ void SW10_PLUG::ProcessMidiMsg(const IMidiMsg& msg)
     printf("Pitch bend: channel:%d value:%d\n", chan, pbVal);
     SendMidiMsg(msg);
     break;
-
-    // TODO IPlug mapping of NRPN/RPN handling
   }
-  //case IMidiMsg::SND_SEQ_EVENT_NONREGPARAM:
-  //  // Not used by CASIO SW-10
-  //  data[0] = 0xB0 | event->data.control.channel;
-  //  data[1] = 0x63; // NRPN MSB
-  //  data[2] = (event->data.control.param >> 7) & 0x7f;
-  //  data[3] = 0x62; // NRPN LSB
-  //  data[4] = event->data.control.param & 0x7f;
-  //  data[5] = 0x06; // data entry MSB
-  //  data[6] = (event->data.control.value >> 7) & 0x7f;
-  //  data[7] = 0x26; // data entry LSB
-  //  data[8] = event->data.control.value & 0x7f;
-  //  length = 9;
-
-  //  lsgWrite(data, length);
-
-  //  printf("NRPN, channel:%d param:%d value:%d\n", event->data.control.channel, event->data.control.param, event->data.control.value);
-  //  SendMidiMsg(msg);
-  //  break;
-
-  //case SND_SEQ_EVENT_REGPARAM:
-  //  data[0] = 0xB0 | event->data.control.channel;
-  //  data[1] = 0x65; // RPN MSB
-  //  data[2] = (event->data.control.param >> 7) & 0x7f;
-  //  data[3] = 0x64; // RPN LSB
-  //  data[4] = event->data.control.param & 0x7f;
-  //  data[5] = 0x06; // data entry MSB
-  //  data[6] = (event->data.control.value >> 7) & 0x7f;
-  //  data[7] = 0x26; // data entry LSB
-  //  data[8] = event->data.control.value & 0x7f;
-  //  length = 9;
-
-  //  lsgWrite(data, length);
-
-  //  printf("RPN, channel:%d param:%d value:%d\n", event->data.control.channel, event->data.control.param, event->data.control.value);
-  //  SendMidiMsg(msg);
-  //  break;
 
   default:
     msg.PrintMsg();
     break;
   }
-  
-//handle:
-  //mDSP.ProcessMidiMsg(msg);
-  //SendMidiMsg(msg);
 }
 
 void SW10_PLUG::OnParamChange(int paramIdx)
