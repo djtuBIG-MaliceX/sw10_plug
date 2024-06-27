@@ -1,7 +1,6 @@
 #include "SW10_PLUG.h"
 #include "IPlug_include_in_plug_src.h"
 #include "LFO.h"
-#include "timeapi.h"
 #include "VLSG.h"
 
 static const char* arg_rom = "ROMSXGM.BIN";
@@ -13,7 +12,7 @@ static uint8_t* rom_address;
 
 static unsigned int timediv;
 
-static int frequency = 2, polyphony = 3, reverb_effect = 1;
+static int frequency = 2, polyphony = 4, reverb_effect = 0;
 
 
 static struct timespec start_time;
@@ -45,6 +44,7 @@ static uint32_t VLSG_GetTime(void)
 static uint32_t VLSG_CALLTYPE lsgGetTime()
 {
 //#ifdef __WINDOWS_MM__
+//  // Requires #include timeapi.h but doesn't work for WinXP
 //  return ::timeGetTime();
 //#else
   return VLSG_GetTime();
@@ -274,6 +274,17 @@ void SW10_PLUG::OnReset()
   mMeterSender.Reset(GetSampleRate());
 }
 
+void SW10_PLUG::ProcessSysEx(const ISysEx& msg)
+{
+  TRACE;
+
+  int length = msg.mSize;
+  uint8_t *data = (uint8_t*)(msg.mData);
+
+  lsgWrite(data, length);
+  printf("SysEx (fragment) of size %d\n", length);
+}
+
 void SW10_PLUG::ProcessMidiMsg(const IMidiMsg& msg)
 {
   TRACE;
@@ -302,7 +313,7 @@ void SW10_PLUG::ProcessMidiMsg(const IMidiMsg& msg)
     printf("Note ON, channel:%d note:%d velocity:%d\n", chan, key, vel);
     SendMidiMsg(msg);
     break;
-
+  
   case IMidiMsg::kNoteOff:
     data[0] = 0x80 | chan;
     data[1] = key;
@@ -446,16 +457,6 @@ void SW10_PLUG::ProcessMidiMsg(const IMidiMsg& msg)
   //  printf("RPN, channel:%d param:%d value:%d\n", event->data.control.channel, event->data.control.param, event->data.control.value);
   //  SendMidiMsg(msg);
   //  break;
-
-    // TODO - check IPlugMidi::ISysEx struct and where it's handled
-  /*case IMidiMsg::kSysex:
-    length = event->data.ext.len;
-
-    lsgWrite(event->data.ext.ptr, length);
-
-    printf("SysEx (fragment) of size %d\n", event->data.ext.len);
-
-    break;*/
 
   default:
     msg.PrintMsg();
