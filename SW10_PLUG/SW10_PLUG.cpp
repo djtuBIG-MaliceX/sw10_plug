@@ -2,6 +2,7 @@
 #include "IPlug_include_in_plug_src.h"
 #include "LFO.h"
 #include "VLSG.h"
+#include <sstream>
 
 static const char* arg_rom = "ROMSXGM.BIN";
 
@@ -51,16 +52,13 @@ static uint32_t VLSG_CALLTYPE lsgGetTime()
 //#endif
 }
 
-//FWdecl
-static uint8_t* load_rom_file(const char* romname);
-
-static void handleDllPath() {
-  char path[MAX_PATH];
+static char* handleDllPath(const char* romname) {
+  static char path[MAX_PATH];
   HMODULE hm = NULL;
 
   if (GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
     GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-    (LPCSTR)&load_rom_file, &hm) == 0)
+    (LPCSTR)&lsgGetTime, &hm) == 0)
   {
     int ret = GetLastError();
     fprintf(stderr, "GetModuleHandle failed, error = %d\n", ret);
@@ -74,6 +72,13 @@ static void handleDllPath() {
   }
 
   // The path variable should now contain the full filepath for this DLL.
+  std::string s1(path);
+  std::stringstream ss;
+
+  ss << s1.substr(0, s1.find_last_of("\\/")) << "\\";
+  strcpy(path, ss.str().c_str());
+  strcat(path, romname);
+  return path;
 }
 
 // TODO move to C++ private function
@@ -82,8 +87,8 @@ static uint8_t* load_rom_file(const char* romname)
   FILE* f;
   uint8_t* mem;
 
-  handleDllPath();
-  f = fopen(romname, "rb");
+  char* dirPath = handleDllPath(romname);
+  f = fopen(dirPath, "rb");
   if (f == NULL)
   {
     return NULL;
