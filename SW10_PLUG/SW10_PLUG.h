@@ -31,11 +31,6 @@ enum EParams
   kNumParams
 };
 
-#if IPLUG_DSP
-// will use EParams in SW10_PLUG_DSP.h
-#include "SW10_PLUG_DSP.h"
-#endif
-
 enum EControlTags
 {
   kCtrlTagMeter = 0,
@@ -67,8 +62,7 @@ public:
   bool OnMessage(int msgTag, int ctrlTag, int dataSize, const void* pData) override;
 
 private:
-  SW10_PLUGDSP<sample> mDSP {16};
   IPeakAvgSender<2> mMeterSender;
-  ISender<1> mLFOVisSender;
+  int bufferMode;
 #endif
 };

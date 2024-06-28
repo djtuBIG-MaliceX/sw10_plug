@@ -164,7 +164,8 @@ static void stop_synth(void)
 
 
 SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
-: iplug::Plugin(info, MakeConfig(kNumParams, kNumPresets))
+: iplug::Plugin(info, MakeConfig(kNumParams, kNumPresets)),
+  bufferMode(2)
 {
   start_synth();
 
@@ -175,7 +176,7 @@ SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
   GetParam(kParamDecay)->InitDouble("Decay", 10., 1., 1000., 0.1, "ms", IParam::kFlagsNone, "ADSR", IParam::ShapePowCurve(3.));
   GetParam(kParamSustain)->InitDouble("Sustain", 50., 0., 100., 1, "%", IParam::kFlagsNone, "ADSR");
   GetParam(kParamRelease)->InitDouble("Release", 10., 2., 1000., 0.1, "ms", IParam::kFlagsNone, "ADSR");
-  GetParam(kParamLFOShape)->InitEnum("LFO Shape", LFO<>::kTriangle, {LFO_SHAPE_VALIST});
+  GetParam(kParamLFOShape)->InitEnum("LFO Shape", 2, {"Off", "Low Latency", "Listener Mode"});
   GetParam(kParamLFORateHz)->InitFrequency("LFO Rate", 1., 0.01, 40.);
   GetParam(kParamLFORateTempo)->InitEnum("LFO Rate", LFO<>::k1, {LFO_TEMPODIV_VALIST});
   GetParam(kParamLFORateMode)->InitBool("LFO Sync", true);
@@ -199,33 +200,26 @@ SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
 //    pGraphics->EnableLiveEdit(true);
     pGraphics->LoadFont("Roboto-Regular", ROBOTO_FN);
     const IRECT b = pGraphics->GetBounds().GetPadded(-20.f);
-    const IRECT lfoPanel = b.GetFromLeft(300.f).GetFromTop(200.f);
-    IRECT keyboardBounds = b.GetFromBottom(300);
+    IRECT keyboardBounds = b.GetFromBottom(100);
     IRECT wheelsBounds = keyboardBounds.ReduceFromLeft(100.f).GetPadded(-10.f);
-    pGraphics->AttachControl(new IVKeyboardControl(keyboardBounds), kCtrlTagKeyboard);
+    auto kbd = new IVKeyboardControl(keyboardBounds);
+    kbd->SetNoteRange(36, 96);
+    pGraphics->AttachControl(kbd, kCtrlTagKeyboard);
     pGraphics->AttachControl(new IWheelControl(wheelsBounds.FracRectHorizontal(0.5)), kCtrlTagBender);
     pGraphics->AttachControl(new IWheelControl(wheelsBounds.FracRectHorizontal(0.5, true), IMidiMsg::EControlChangeMsg::kModWheel));
 //    pGraphics->AttachControl(new IVMultiSliderControl<4>(b.GetGridCell(0, 2, 2).GetPadded(-30), "", DEFAULT_STYLE, kParamAttack, EDirection::Vertical, 0.f, 1.f));
     const IRECT controls = b.GetGridCell(1, 2, 2);
     pGraphics->AttachControl(new IVKnobControl(controls.GetGridCell(0, 2, 6).GetCentredInside(90), kParamGain, "Gain"));
     pGraphics->AttachControl(new IVKnobControl(controls.GetGridCell(1, 2, 6).GetCentredInside(90), kParamNoteGlideTime, "Glide"));
-    const IRECT sliders = controls.GetGridCell(2, 2, 6).Union(controls.GetGridCell(3, 2, 6)).Union(controls.GetGridCell(4, 2, 6));
-    pGraphics->AttachControl(new IVSliderControl(sliders.GetGridCell(0, 1, 4).GetMidHPadded(30.), kParamAttack, "Attack"));
-    pGraphics->AttachControl(new IVSliderControl(sliders.GetGridCell(1, 1, 4).GetMidHPadded(30.), kParamDecay, "Decay"));
-    pGraphics->AttachControl(new IVSliderControl(sliders.GetGridCell(2, 1, 4).GetMidHPadded(30.), kParamSustain, "Sustain"));
-    pGraphics->AttachControl(new IVSliderControl(sliders.GetGridCell(3, 1, 4).GetMidHPadded(30.), kParamRelease, "Release"));
-    pGraphics->AttachControl(new IVLEDMeterControl<2>(controls.GetFromRight(100).GetPadded(-30)), kCtrlTagMeter);
-    
-    pGraphics->AttachControl(new IVKnobControl(lfoPanel.GetGridCell(0, 0, 2, 3).GetCentredInside(60), kParamLFORateHz, "Rate"), kNoTag, "LFO")->Hide(true);
-    pGraphics->AttachControl(new IVKnobControl(lfoPanel.GetGridCell(0, 0, 2, 3).GetCentredInside(60), kParamLFORateTempo, "Rate"), kNoTag, "LFO")->DisablePrompt(false);
-    pGraphics->AttachControl(new IVKnobControl(lfoPanel.GetGridCell(0, 1, 2, 3).GetCentredInside(60), kParamLFODepth, "Depth"), kNoTag, "LFO");
-    pGraphics->AttachControl(new IVKnobControl(lfoPanel.GetGridCell(0, 2, 2, 3).GetCentredInside(60), kParamLFOShape, "Shape"), kNoTag, "LFO")->DisablePrompt(false);
-    pGraphics->AttachControl(new IVSlideSwitchControl(lfoPanel.GetGridCell(1, 0, 2, 3).GetFromTop(30).GetMidHPadded(20), kParamLFORateMode, "Sync", DEFAULT_STYLE.WithShowValue(false).WithShowLabel(false).WithWidgetFrac(0.5f).WithDrawShadows(false), false), kNoTag, "LFO");
-    pGraphics->AttachControl(new IVDisplayControl(lfoPanel.GetGridCell(1, 1, 2, 3).Union(lfoPanel.GetGridCell(1, 2, 2, 3)), "", DEFAULT_STYLE, EDirection::Horizontal, 0.f, 1.f, 0.f, 1024), kCtrlTagLFOVis, "LFO");
-    
-    pGraphics->AttachControl(new IVGroupControl("LFO", "LFO", 10.f, 20.f, 10.f, 10.f));
-    
-    pGraphics->AttachControl(new IVButtonControl(keyboardBounds.GetFromTRHC(200, 30).GetTranslated(0, -30), SplashClickActionFunc,
+    pGraphics->AttachControl(new IVKnobControl(controls.GetGridCell(2, 2, 6).GetCentredInside(90), kParamLFOShape, "RenderMode"), kNoTag, "RenderMode")->DisablePrompt(false);
+    //const IRECT sliders = controls.GetGridCell(3, 2, 6).Union(controls.GetGridCell(3, 2, 6)).Union(controls.GetGridCell(4, 2, 6));
+    //pGraphics->AttachControl(new IVSliderControl(sliders.GetGridCell(0, 1, 4).GetMidHPadded(30.), kParamAttack, "Attack"));
+    //pGraphics->AttachControl(new IVSliderControl(sliders.GetGridCell(1, 1, 4).GetMidHPadded(30.), kParamDecay, "Decay"));
+    //pGraphics->AttachControl(new IVSliderControl(sliders.GetGridCell(2, 1, 4).GetMidHPadded(30.), kParamSustain, "Sustain"));
+    //pGraphics->AttachControl(new IVSliderControl(sliders.GetGridCell(3, 1, 4).GetMidHPadded(30.), kParamRelease, "Release"));
+    pGraphics->AttachControl(new IVLEDMeterControl<2>(controls.GetFromRight(100).GetPadded(-10)), kCtrlTagMeter);
+      
+    pGraphics->AttachControl(new IVButtonControl(keyboardBounds.GetFromTRHC(200, 30).GetTranslated(0, -300), SplashClickActionFunc,
       "Show/Hide Keyboard", DEFAULT_STYLE.WithColor(kFG, COLOR_WHITE).WithLabelText({15.f, EVAlign::Middle})))->SetAnimationEndActionFunction(
       [pGraphics](IControl* pCaller) {
         static bool hide = false;
@@ -252,30 +246,30 @@ SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
 #if IPLUG_DSP
 void SW10_PLUG::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 {
-  //mDSP.ProcessBlock(nullptr, outputs, 2, nFrames, mTimeInfo.mPPQPos, mTimeInfo.mTransportIsRunning);
   static int renderedSampleQueueSize = 0;
   static uint16_t renderOffset = 0;
 
-  // Attempt 1 - directly render as requested to output buffer (without respecting internal timer code)
-  //VLSG_BufferVst(outbuf_counter, outputs, nFrames);
-  //outbuf_counter++;
-
-  // Attempt 2 - render the chunks based on existing hard-coded sample sizes, but only dequeue on demand.
-  if (renderedSampleQueueSize <= 0) {
-    VLSG_Buffer(outbuf_counter);
-    renderedSampleQueueSize += 1024;  //outbuf_size_para (uint8_t)
-    ++outbuf_counter;
-  }
-
-  for (int sampleIdx = 0, frameIdx = 0; frameIdx < nFrames; ) {
+  if (bufferMode == 1) {
+    // Attempt 1 - directly render as requested to output buffer (without respecting internal timer code)
+    VLSG_BufferVst(outbuf_counter, outputs, nFrames);
+  } else if (bufferMode == 2) {
+    // Attempt 2 - render the chunks based on existing hard-coded sample sizes, but only dequeue on demand.
     if (renderedSampleQueueSize <= 0) {
       VLSG_Buffer(outbuf_counter);
-      renderedSampleQueueSize += 1024;
+      renderedSampleQueueSize += 1024;  //outbuf_size_para (uint8_t)
       ++outbuf_counter;
     }
-    outputs[0][frameIdx] = (((int16_t*)wav_buffer)[renderOffset++ & 32767]) / 32768.0;
-    outputs[1][frameIdx++] = (((int16_t*)wav_buffer)[renderOffset++ & 32767]) / 32768.0;
-    --renderedSampleQueueSize;
+
+    for (int sampleIdx = 0, frameIdx = 0; frameIdx < nFrames; ) {
+      if (renderedSampleQueueSize <= 0) {
+        VLSG_Buffer(outbuf_counter);
+        renderedSampleQueueSize += 1024;
+        ++outbuf_counter;
+      }
+      outputs[0][frameIdx] = (((int16_t*)wav_buffer)[renderOffset++ & 32767]) / 32768.0;
+      outputs[1][frameIdx++] = (((int16_t*)wav_buffer)[renderOffset++ & 32767]) / 32768.0;
+      --renderedSampleQueueSize;
+    }
   }
   
   mMeterSender.ProcessBlock(outputs, nFrames, kCtrlTagMeter);
@@ -284,7 +278,6 @@ void SW10_PLUG::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 void SW10_PLUG::OnIdle()
 {
   mMeterSender.TransmitData(*this);
-  //mLFOVisSender.TransmitData(*this);
 }
 
 void SW10_PLUG::OnReset()
@@ -429,19 +422,26 @@ void SW10_PLUG::ProcessMidiMsg(const IMidiMsg& msg)
 
 void SW10_PLUG::OnParamChange(int paramIdx)
 {
-  mDSP.SetParam(paramIdx, GetParam(paramIdx)->Value());
+  //mDSP.SetParam(paramIdx, GetParam(paramIdx)->Value());
+  auto value = GetParam(paramIdx)->Value();
+  switch (paramIdx) {
+  case kParamLFOShape:
+    bufferMode = value;
+    break;
+  }
+
 }
 
 void SW10_PLUG::OnParamChangeUI(int paramIdx, EParamSource source)
 {
   if (auto pGraphics = GetUI())
   {
-    if (paramIdx == kParamLFORateMode)
+    /*if (paramIdx == kParamLFORateMode)
     {
       const auto sync = GetParam(kParamLFORateMode)->Bool();
       pGraphics->HideControl(kParamLFORateHz, sync);
       pGraphics->HideControl(kParamLFORateTempo, !sync);
-    }
+    }*/
   }
 }
 

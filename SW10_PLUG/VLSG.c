@@ -756,6 +756,7 @@ VLSG_API_(int32_t) VLSG_BufferVst(uint32_t output_buffer_counter, double** outpu
   uint8_t* output_ptr;
   uint32_t time4;
 
+
   time1 = VLSG_GetTime();
 
   if ((output_buffer_counter == 0) || (time1 - system_time_1 > 200))
@@ -799,10 +800,10 @@ VLSG_API_(int32_t) VLSG_BufferVst(uint32_t output_buffer_counter, double** outpu
   // TODO - render sub-buffers more precisely irrespective of nFrames size
   //int quant = (nFrames >> 2);
   int quant = output_size_para / 4;
+  //int quant = nFrames;
   int frames_left = nFrames;
   //if (quant < 32) quant = 32;
   if (quant == 0) quant = 1;
-  //for (counter = 4; counter != 0; counter--)
   for (; frames_left > 0; frames_left -= quant)
   {
     // If uneven quants, get the correct range
@@ -813,40 +814,13 @@ VLSG_API_(int32_t) VLSG_BufferVst(uint32_t output_buffer_counter, double** outpu
     ProcessPhase();
     GenerateOutputDataVst(output, offset1, offset1 + quant);
     offset1 += quant;
+
     dword_C0000000++;
     system_time_1 = (((uint32_t)(dword_C0000000 * dword_C0000004)) >> 9) + dword_C0000008;
   }
 
-  /*ProcessMidiData();
-  ProcessPhase();
-  GenerateOutputDataVst(output, offset1, offset1 + (nFrames));
-  offset1 += (nFrames);
-  dword_C0000000++;
-  system_time_1 = (((uint32_t)(dword_C0000000 * dword_C0000004)) >> 9) + dword_C0000008;*/
-  
-
-  time4 = VLSG_GetTime();
   CountActiveVoices();
-  time4 -= time1;
   maximum_polyphony = maximum_polyphony_new_value;
-
-  //if (time4 > 300)
-  //{
-  //  SetMaximumVoices(2);
-  //  return current_polyphony;
-  //}
-
-  //if (time4 >= 16)
-  //{
-  //  if (time4 >= 20)
-  //  {
-  //    SetMaximumVoices((3 * current_polyphony) >> 2);
-  //    return current_polyphony;
-  //  }
-
-  //  SetMaximumVoices((7 * current_polyphony) >> 3);
-  //  return current_polyphony;
-  //}
 
   return current_polyphony;
 }
@@ -1411,9 +1385,9 @@ static void ProcessMidiData(void)
     while (1)
     {
         midi_value = GetValueFromMidiDataBuffer();
-        if (midi_value == 0xFF) break;
+        if (midi_value == 0xFF) break; // Stop processing
 
-        if (midi_value > 0xF7) continue;
+        if (midi_value > 0xF7) continue; // Drop MIDI data, continue to next.
 
         if (midi_value == 0xF7)
         {
@@ -1941,8 +1915,8 @@ static void GenerateOutputDataVst(double **output_ptr, uint32_t offset1, uint32_
 {
   int index1, max_active_index;
   unsigned int index2;
-  int32_t left;
-  int32_t right;
+  int64_t left;
+  int64_t right;
   uint32_t value1;
   uint32_t value2;
   uint32_t value3;
