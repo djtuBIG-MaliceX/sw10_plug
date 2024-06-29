@@ -17,13 +17,14 @@ int clock_gettime(int, struct timespec* spec)      //C-file part
 
 enum EParams
 {
-  kParamGain = 0,
-  kParamNoteGlideTime,
+  kParamSampleRate = 0,
+  kParamPolyphony,
+  kParamReverbMode,
   kParamAttack,
   kParamDecay,
   kParamSustain,
   kParamRelease,
-  kParamLFOShape,
+  kParamBufferRenderMode,
   kParamLFORateHz,
   kParamLFORateTempo,
   kParamLFORateMode,

@@ -483,10 +483,19 @@ VLSG_API_(VLSG_Bool) VLSG_SetParameter(uint32_t type, uintptr_t value)
             if (value == 0) {
                 return VLSG_SetFrequency(11025);
             }
+            if (value == 1) {
+              return VLSG_SetFrequency(22050);
+            }
             if (value == 2) {
                 return VLSG_SetFrequency(44100);
             }
-            return VLSG_SetFrequency(22050);
+            if (value == 3) { // Experimental
+              return VLSG_SetFrequency(16538);
+            }
+            if (value == 4) { // Experimental
+              return VLSG_SetFrequency(48000);
+            }
+            return VLSG_SetFrequency(44100);
 
         case PARAMETER_Polyphony:
             if (value == 0x11) {
@@ -498,7 +507,7 @@ VLSG_API_(VLSG_Bool) VLSG_SetParameter(uint32_t type, uintptr_t value)
             else if (value == 0x13) {
                 return VLSG_SetPolyphony(64);
             }
-            else if (value == 0x14) {
+            else if (value == 0x14) { // Experimental
               return VLSG_SetPolyphony(128);
             }
             return VLSG_SetPolyphony(24);
@@ -545,6 +554,14 @@ VLSG_API_(VLSG_Bool) VLSG_SetFrequency(unsigned int frequency)
         output_frequency = 22050;
         output_size_para = 128;
         buffer_size = 8192;
+    } else if (frequency == 16538) {
+        output_frequency = 16538;
+        output_size_para = 96;
+        buffer_size = 8000;
+    } else if (frequency == 48000) {
+        output_frequency = 48000;
+        output_size_para = 384;
+        buffer_size = 16384;
     } else {
         return VLSG_FALSE;
     }

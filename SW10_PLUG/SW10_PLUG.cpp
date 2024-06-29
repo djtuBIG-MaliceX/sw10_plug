@@ -9,7 +9,7 @@ static const char* arg_rom = "ROMSXGM.BIN";
 static uint32_t outbuf_counter;
 
 static uint8_t* rom_address;
-static uint8_t wav_buffer[65536];  // NOTE: SAMPLES ARE int16_t stereo interleaved!
+static uint8_t wav_buffer[131072];  // NOTE: SAMPLES ARE int16_t stereo interleaved!
 
 static unsigned int timediv;
 
@@ -166,13 +166,14 @@ SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
   start_synth();
 
   // TODO remap params
-  GetParam(kParamGain)->InitDouble("Gain", 100., 0., 100.0, 0.01, "%");
-  GetParam(kParamNoteGlideTime)->InitMilliseconds("Note Glide Time", 0., 0.0, 30.);
+  GetParam(kParamSampleRate)->InitEnum("SampleRate", 2., { "11025", "22050", "44100", "16538", "48000" });
+  GetParam(kParamPolyphony)->InitEnum("Polyphony", 4., {"24", "32", "48", "64", "128"});
+  GetParam(kParamReverbMode)->InitEnum("Reverb Mode", 0., { "Off", "Reverb 1", "Reverb 2" });
   GetParam(kParamAttack)->InitDouble("Attack", 10., 1., 1000., 0.1, "ms", IParam::kFlagsNone, "ADSR", IParam::ShapePowCurve(3.));
   GetParam(kParamDecay)->InitDouble("Decay", 10., 1., 1000., 0.1, "ms", IParam::kFlagsNone, "ADSR", IParam::ShapePowCurve(3.));
   GetParam(kParamSustain)->InitDouble("Sustain", 50., 0., 100., 1, "%", IParam::kFlagsNone, "ADSR");
   GetParam(kParamRelease)->InitDouble("Release", 10., 2., 1000., 0.1, "ms", IParam::kFlagsNone, "ADSR");
-  GetParam(kParamLFOShape)->InitEnum("LFO Shape", 1, {"Off", "Low Latency", "Listener Mode"});
+  GetParam(kParamBufferRenderMode)->InitEnum("LFO Shape", 1, {"Off", "Low Latency", "Listener Mode"});
   GetParam(kParamLFORateHz)->InitFrequency("LFO Rate", 1., 0.01, 40.);
   GetParam(kParamLFORateTempo)->InitEnum("LFO Rate", LFO<>::k1, {LFO_TEMPODIV_VALIST});
   GetParam(kParamLFORateMode)->InitBool("LFO Sync", true);
@@ -204,16 +205,17 @@ SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
     pGraphics->AttachControl(new IWheelControl(wheelsBounds.FracRectHorizontal(0.5)), kCtrlTagBender);
     pGraphics->AttachControl(new IWheelControl(wheelsBounds.FracRectHorizontal(0.5, true), IMidiMsg::EControlChangeMsg::kModWheel));
 //    pGraphics->AttachControl(new IVMultiSliderControl<4>(b.GetGridCell(0, 2, 2).GetPadded(-30), "", DEFAULT_STYLE, kParamAttack, EDirection::Vertical, 0.f, 1.f));
-    const IRECT controls = b.GetGridCell(1, 2, 2);
-    pGraphics->AttachControl(new IVKnobControl(controls.GetGridCell(0, 2, 6).GetCentredInside(90), kParamGain, "Gain"));
-    pGraphics->AttachControl(new IVKnobControl(controls.GetGridCell(1, 2, 6).GetCentredInside(90), kParamNoteGlideTime, "Glide"));
-    pGraphics->AttachControl(new IVKnobControl(controls.GetGridCell(2, 2, 6).GetCentredInside(90), kParamLFOShape, "RenderMode"), kNoTag, "RenderMode")->DisablePrompt(false);
+    const IRECT controls = b.GetGridCell(0, 4, 3);
+    pGraphics->AttachControl(new IVKnobControl(controls.GetGridCell(0, 1, 4).GetCentredInside(90), kParamSampleRate, "Sample Rate"));
+    pGraphics->AttachControl(new IVKnobControl(controls.GetGridCell(1, 1, 4).GetCentredInside(90), kParamPolyphony, "Polyphony"));
+    pGraphics->AttachControl(new IVKnobControl(controls.GetGridCell(2, 1, 4).GetCentredInside(90), kParamReverbMode, "Reverb"));
+    pGraphics->AttachControl(new IVKnobControl(controls.GetGridCell(3, 1, 4).GetCentredInside(90), kParamBufferRenderMode, "RenderMode"), kNoTag, "RenderMode")->DisablePrompt(false);
     //const IRECT sliders = controls.GetGridCell(3, 2, 6).Union(controls.GetGridCell(3, 2, 6)).Union(controls.GetGridCell(4, 2, 6));
     //pGraphics->AttachControl(new IVSliderControl(sliders.GetGridCell(0, 1, 4).GetMidHPadded(30.), kParamAttack, "Attack"));
     //pGraphics->AttachControl(new IVSliderControl(sliders.GetGridCell(1, 1, 4).GetMidHPadded(30.), kParamDecay, "Decay"));
     //pGraphics->AttachControl(new IVSliderControl(sliders.GetGridCell(2, 1, 4).GetMidHPadded(30.), kParamSustain, "Sustain"));
     //pGraphics->AttachControl(new IVSliderControl(sliders.GetGridCell(3, 1, 4).GetMidHPadded(30.), kParamRelease, "Release"));
-    pGraphics->AttachControl(new IVLEDMeterControl<2>(controls.GetFromRight(100).GetPadded(-10)), kCtrlTagMeter);
+    pGraphics->AttachControl(new IVLEDMeterControl<2>(b.GetFromRight(100).GetPadded(-10)), kCtrlTagMeter);
       
     pGraphics->AttachControl(new IVButtonControl(keyboardBounds.GetFromTRHC(200, 30).GetTranslated(0, -300), SplashClickActionFunc,
       "Show/Hide Keyboard", DEFAULT_STYLE.WithColor(kFG, COLOR_WHITE).WithLabelText({15.f, EVAlign::Middle})))->SetAnimationEndActionFunction(
@@ -424,8 +426,20 @@ void SW10_PLUG::OnParamChange(int paramIdx)
   //mDSP.SetParam(paramIdx, GetParam(paramIdx)->Value());
   auto value = GetParam(paramIdx)->Value();
   switch (paramIdx) {
-  case kParamLFOShape:
+  case kParamSampleRate:
+    frequency = value;
+    VLSG_SetParameter(PARAMETER_Frequency, frequency);
+    break;
+  case kParamPolyphony:
+    polyphony = value;
+    VLSG_SetParameter(PARAMETER_Polyphony, 0x10 + polyphony);
+    break;
+  case kParamBufferRenderMode:
     bufferMode = value;
+    break;
+  case kParamReverbMode:
+    reverb_effect = value;
+    VLSG_SetParameter(PARAMETER_Effect, 0x20 + reverb_effect);
     break;
   }
 
