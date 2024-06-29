@@ -28,6 +28,7 @@
 
 #ifdef _MSC_VER
 #define inline __inline
+#include <intrin.h>
 #endif
 
 #define MIDI_CHANNELS 16
@@ -843,7 +844,7 @@ void VLSG_AddMidiData(uint8_t *ptr, uint32_t len)
 
 int32_t VLSG_FillOutputBuffer(uint32_t output_buffer_counter)
 {
-  return VLSG_Buffer(output_buffer_counter, output_size_para);
+  return VLSG_Buffer(output_buffer_counter);
 }
 
 static int32_t InitializeVelocityFunc(void)

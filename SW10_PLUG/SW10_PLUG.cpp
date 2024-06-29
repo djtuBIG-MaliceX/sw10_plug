@@ -32,23 +32,17 @@ static inline void WRITE_LE_UINT32(uint8_t* ptr, uint32_t value)
   ptr[3] = (value >> 24) & 0xff;
 }
 
-// Needed if using DLL (not linking to winmm)
-static uint32_t VLSG_GetTime(void)
-{
-  struct timespec _tp;
-
-  clock_gettime(0, &_tp);
-
-  return ((_tp.tv_sec - start_time.tv_sec) * 1000) + ((_tp.tv_nsec - start_time.tv_nsec) / 1000000);
-}
-
 static uint32_t VLSG_CALLTYPE lsgGetTime()
 {
 //#ifdef __WINDOWS_MM__
 //  // Requires #include timeapi.h but doesn't work for WinXP
 //  return ::timeGetTime();
 //#else
-  return VLSG_GetTime();
+  struct timespec _tp;
+
+  clock_gettime(0, &_tp);
+
+  return ((_tp.tv_sec - start_time.tv_sec) * 1000) + ((_tp.tv_nsec - start_time.tv_nsec) / 1000000);
 //#endif
 }
 
