@@ -20,7 +20,7 @@ enum EParams
   kParamSampleRate = 0,
   kParamPolyphony,
   kParamReverbMode,
-  kParamAttack,
+  kParamPitchBendRange,
   kParamDecay,
   kParamSustain,
   kParamRelease,

@@ -140,9 +140,9 @@ static int start_synth(void)
   // set address of ROM file
   VLSG_SetParameter(PARAMETER_ROMAddress, (uintptr_t)rom_address);
 
-  // set output buffer - not used as being used from IPlug2 directly
+  // set output buffer
   outbuf_counter = 0;
-  memset(wav_buffer, 0, 65536);
+  memset(wav_buffer, 0, 131072);
   VLSG_SetParameter(PARAMETER_OutputBuffer, (uintptr_t)wav_buffer);
 
   // start playback
@@ -169,11 +169,11 @@ SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
   GetParam(kParamSampleRate)->InitEnum("SampleRate", 2., { "11025", "22050", "44100", "16538", "48000" });
   GetParam(kParamPolyphony)->InitEnum("Polyphony", 4., {"24", "32", "48", "64", "128"});
   GetParam(kParamReverbMode)->InitEnum("Reverb Mode", 0., { "Off", "Reverb 1", "Reverb 2" });
-  GetParam(kParamAttack)->InitDouble("Attack", 10., 1., 1000., 0.1, "ms", IParam::kFlagsNone, "ADSR", IParam::ShapePowCurve(3.));
+  GetParam(kParamPitchBendRange)->InitInt("PitchBend Range", 2, 0, 127, "semitones", IParam::kFlagsNone, "ADSR");
   GetParam(kParamDecay)->InitDouble("Decay", 10., 1., 1000., 0.1, "ms", IParam::kFlagsNone, "ADSR", IParam::ShapePowCurve(3.));
   GetParam(kParamSustain)->InitDouble("Sustain", 50., 0., 100., 1, "%", IParam::kFlagsNone, "ADSR");
   GetParam(kParamRelease)->InitDouble("Release", 10., 2., 1000., 0.1, "ms", IParam::kFlagsNone, "ADSR");
-  GetParam(kParamBufferRenderMode)->InitEnum("LFO Shape", 1, {"Off", "Low Latency", "Listener Mode"});
+  GetParam(kParamBufferRenderMode)->InitEnum("Render Mode", 1, {"Off", "Low Latency", "Original Driver"});
   GetParam(kParamLFORateHz)->InitFrequency("LFO Rate", 1., 0.01, 40.);
   GetParam(kParamLFORateTempo)->InitEnum("LFO Rate", LFO<>::k1, {LFO_TEMPODIV_VALIST});
   GetParam(kParamLFORateMode)->InitBool("LFO Sync", true);
@@ -186,7 +186,7 @@ SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
   
   mLayoutFunc = [&](IGraphics* pGraphics) {
     pGraphics->AttachCornerResizer(EUIResizerMode::Scale, false);
-    pGraphics->AttachPanelBackground(COLOR_GRAY);
+    pGraphics->AttachPanelBackground(COLOR_WHITE);
     pGraphics->EnableMouseOver(true);
     pGraphics->EnableMultiTouch(true);
     
@@ -206,16 +206,16 @@ SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
     pGraphics->AttachControl(new IWheelControl(wheelsBounds.FracRectHorizontal(0.5, true), IMidiMsg::EControlChangeMsg::kModWheel));
 //    pGraphics->AttachControl(new IVMultiSliderControl<4>(b.GetGridCell(0, 2, 2).GetPadded(-30), "", DEFAULT_STYLE, kParamAttack, EDirection::Vertical, 0.f, 1.f));
     const IRECT controls = b.GetGridCell(0, 4, 3);
-    pGraphics->AttachControl(new IVKnobControl(controls.GetGridCell(0, 1, 4).GetCentredInside(90), kParamSampleRate, "Sample Rate"));
-    pGraphics->AttachControl(new IVKnobControl(controls.GetGridCell(1, 1, 4).GetCentredInside(90), kParamPolyphony, "Polyphony"));
-    pGraphics->AttachControl(new IVKnobControl(controls.GetGridCell(2, 1, 4).GetCentredInside(90), kParamReverbMode, "Reverb"));
+    pGraphics->AttachControl(new IVKnobControl(controls.GetGridCell(0, 1, 4).GetCentredInside(90), kParamSampleRate, "Sample Rate"), kNoTag, "RenderMode")->DisablePrompt(false);
+    pGraphics->AttachControl(new IVKnobControl(controls.GetGridCell(1, 1, 4).GetCentredInside(90), kParamPolyphony, "Polyphony"), kNoTag, "RenderMode")->DisablePrompt(false);
+    pGraphics->AttachControl(new IVKnobControl(controls.GetGridCell(2, 1, 4).GetCentredInside(90), kParamReverbMode, "Reverb"), kNoTag, "Reverb")->DisablePrompt(false);
     pGraphics->AttachControl(new IVKnobControl(controls.GetGridCell(3, 1, 4).GetCentredInside(90), kParamBufferRenderMode, "RenderMode"), kNoTag, "RenderMode")->DisablePrompt(false);
-    //const IRECT sliders = controls.GetGridCell(3, 2, 6).Union(controls.GetGridCell(3, 2, 6)).Union(controls.GetGridCell(4, 2, 6));
-    //pGraphics->AttachControl(new IVSliderControl(sliders.GetGridCell(0, 1, 4).GetMidHPadded(30.), kParamAttack, "Attack"));
+    const IRECT sliders = b.GetGridCell(1, 4, 3); //.Union(controls.GetGridCell(3, 2, 6)).Union(controls.GetGridCell(4, 1, 4));
+    pGraphics->AttachControl(new IVSliderControl(sliders.GetGridCell(0, 1, 4), kParamPitchBendRange, "PitchBend Range"));
     //pGraphics->AttachControl(new IVSliderControl(sliders.GetGridCell(1, 1, 4).GetMidHPadded(30.), kParamDecay, "Decay"));
     //pGraphics->AttachControl(new IVSliderControl(sliders.GetGridCell(2, 1, 4).GetMidHPadded(30.), kParamSustain, "Sustain"));
     //pGraphics->AttachControl(new IVSliderControl(sliders.GetGridCell(3, 1, 4).GetMidHPadded(30.), kParamRelease, "Release"));
-    pGraphics->AttachControl(new IVLEDMeterControl<2>(b.GetFromRight(100).GetPadded(-10)), kCtrlTagMeter);
+    pGraphics->AttachControl(new IVLEDMeterControl<2>(b.GetFromRight(100).GetPadded(-5).GetReducedFromBottom(100)), kCtrlTagMeter);
       
     pGraphics->AttachControl(new IVButtonControl(keyboardBounds.GetFromTRHC(200, 30).GetTranslated(0, -300), SplashClickActionFunc,
       "Show/Hide Keyboard", DEFAULT_STYLE.WithColor(kFG, COLOR_WHITE).WithLabelText({15.f, EVAlign::Middle})))->SetAnimationEndActionFunction(
@@ -426,23 +426,41 @@ void SW10_PLUG::OnParamChange(int paramIdx)
   //mDSP.SetParam(paramIdx, GetParam(paramIdx)->Value());
   auto value = GetParam(paramIdx)->Value();
   switch (paramIdx) {
-  case kParamSampleRate:
-    frequency = value;
-    VLSG_SetParameter(PARAMETER_Frequency, frequency);
-    break;
-  case kParamPolyphony:
-    polyphony = value;
-    VLSG_SetParameter(PARAMETER_Polyphony, 0x10 + polyphony);
-    break;
-  case kParamBufferRenderMode:
-    bufferMode = value;
-    break;
-  case kParamReverbMode:
-    reverb_effect = value;
-    VLSG_SetParameter(PARAMETER_Effect, 0x20 + reverb_effect);
-    break;
-  }
+    case kParamSampleRate:
+      frequency = value;
+      VLSG_SetParameter(PARAMETER_Frequency, frequency);
+      break;
+    case kParamPolyphony:
+      polyphony = value;
+      VLSG_SetParameter(PARAMETER_Polyphony, 0x10 + polyphony);
+      break;
+    case kParamBufferRenderMode:
+      bufferMode = value;
+      break;
+    case kParamReverbMode:
+      reverb_effect = value;
+      VLSG_SetParameter(PARAMETER_Effect, 0x20 + reverb_effect);
+      break;
+    case kParamPitchBendRange: {
+      // Send 0-0-bendRange RPN event
+      uint8_t data[3];
+      data[0] = 0xB0 | 0;
+      data[1] = 100 & 0x7f;
+      data[2] = 0 & 0x7f;
+      lsgWrite(data, 3);
 
+      data[0] = 0xB0 | 0;
+      data[1] = 101 & 0x7f;
+      data[2] = 0 & 0x7f;
+      lsgWrite(data, 3);
+
+      data[0] = 0xB0 | 0;
+      data[1] = 6 & 0x7f;
+      data[2] = (uint8_t)value & 0x7f;
+      lsgWrite(data, 3);
+      break;
+    }
+  }
 }
 
 void SW10_PLUG::OnParamChangeUI(int paramIdx, EParamSource source)
@@ -462,11 +480,24 @@ bool SW10_PLUG::OnMessage(int msgTag, int ctrlTag, int dataSize, const void* pDa
 {
   if(ctrlTag == kCtrlTagBender && msgTag == IWheelControl::kMessageTagSetPitchBendRange)
   {
-    const int bendRange = *static_cast<const int*>(pData);
-    //mDSP.mSynth.SetPitchBendRange(bendRange);
+    auto bendRange = *static_cast<const uint8_t*>(pData);
 
-    // TODO send 0-0-pData  RPN event
-    
+    // Send 0-0-bendRange RPN event
+    uint8_t data[3];
+    data[0] = 0xB0 | 0;
+    data[1] = 100 & 0x7f;
+    data[2] = 0 & 0x7f;
+    lsgWrite(data, 3);
+
+    data[0] = 0xB0 | 0;
+    data[1] = 101 & 0x7f;
+    data[2] = 0 & 0x7f;
+    lsgWrite(data, 3);
+
+    data[0] = 0xB0 | 0;
+    data[1] = 6 & 0x7f;
+    data[2] = bendRange & 0x7f;
+    lsgWrite(data, 3);
   }
   
   return false;

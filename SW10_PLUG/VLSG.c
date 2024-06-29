@@ -772,59 +772,18 @@ VLSG_API_(int32_t) VLSG_Buffer(uint32_t output_buffer_counter)
 // Seriously CBF that hardcoded buffer BS so writing the output directly on demand.
 VLSG_API_(int32_t) VLSG_BufferVst(uint32_t output_buffer_counter, double** output, int nFrames)
 {
-  uint32_t time1, value1, time2, time3;
-  int counter;
-
-
-  time1 = VLSG_GetTime();
-
-  if ((output_buffer_counter == 0) || (time1 - system_time_1 > 200))
-  {
-    value1 = 0;
-    time2 = time1;
-    system_time_1 = time1;
-    system_time_2 = time1;
+  if (output_buffer_counter == 0) {
+    system_time_1 = VLSG_GetTime();
   }
-  else
-  {
-    value1 = dword_C0000000;
-    time2 = dword_C0000008;
-  }
-
-  dword_C0000000 = value1;
-  dword_C0000008 = time2;
-
-  if (value1 >= 512)
-  {
-    dword_C0000000 = 0;
-    time2 += dword_C0000004;
-    dword_C0000008 = time2;
-    time3 = (7 * dword_C0000004 - system_time_2) + time1;
-
-    if (time1 < time2)
-    {
-      time3 -= (time2 - time1) >> 4;
-    }
-    else if (time1 > time2)
-    {
-      time3 += (time1 - time2) >> 4;
-    }
-
-    system_time_2 = time1;
-    dword_C0000004 = (time3 >> 3) + ((time3 & 4) >> 2);
-  }
-
+  
   uint32_t offset1 = 0;
-
-  // TODO - render sub-buffers more precisely irrespective of nFrames size
   static int phaseAcc = INT_MIN;
 
   //int quant = (nFrames >> 2);
   int quant = output_size_para / 4;
   //int quant = nFrames;
   int frames_left = nFrames;
-  //if (quant < 32) quant = 32;
-  if (quant == 0) quant = 1;
+  if (quant < 16) quant = 16;
   for (; frames_left > 0; frames_left -= quant)
   {
     // If uneven quants, get the correct range
@@ -833,10 +792,10 @@ VLSG_API_(int32_t) VLSG_BufferVst(uint32_t output_buffer_counter, double** outpu
 
     ProcessMidiData();  // in case anything missed
 
-    // Do not progress envelope phase until after 256 frames (as per original hardcoded BS)
-    if (phaseAcc == INT_MIN || phaseAcc >= 256) {
+    // Do not progress envelope phase until after output_size_para frames (as per original hardcoded BS)
+    if (phaseAcc == INT_MIN || phaseAcc >= output_size_para) {
       ProcessPhase();
-      phaseAcc = (INT_MIN) ? 0 : (phaseAcc - 256);
+      phaseAcc = (INT_MIN) ? 0 : (phaseAcc - output_size_para);
     } else {
       phaseAcc += quant;
     }

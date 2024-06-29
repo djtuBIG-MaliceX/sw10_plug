@@ -1,12 +1,12 @@
 #define PLUG_NAME "SW10_PLUG"
 #define PLUG_MFR "cassiopeia"
-#define PLUG_VERSION_HEX 0x00010000
-#define PLUG_VERSION_STR "1.0.0"
-#define PLUG_UNIQUE_ID 'i3cn'
-#define PLUG_MFR_ID 'Acme'
-#define PLUG_URL_STR "https://iplug2.github.io"
+#define PLUG_VERSION_HEX 0x00000001
+#define PLUG_VERSION_STR "0.0.1"
+#define PLUG_UNIQUE_ID 'SW10'
+#define PLUG_MFR_ID 'djtB'
+#define PLUG_URL_STR "https://www.codingchords.com"
 #define PLUG_EMAIL_STR "spam@me.com"
-#define PLUG_COPYRIGHT_STR "Copyright 2020 Acme Inc"
+#define PLUG_COPYRIGHT_STR "(C) 2024 social engineers australis"
 #define PLUG_CLASS_NAME SW10_PLUG
 
 #define BUNDLE_NAME "SW10_PLUG"
@@ -36,7 +36,7 @@
 #define AUV2_VIEW_CLASS_STR "SW10_PLUG_View"
 
 #define AAX_TYPE_IDS 'IPI1', 'IPI2'
-#define AAX_PLUG_MFR_STR "Acme"
+#define AAX_PLUG_MFR_STR "social engineers australis"
 #define AAX_PLUG_NAME_STR "SW10_PLUG\nIPIS"
 #define AAX_DOES_AUDIOSUITE 0
 #define AAX_PLUG_CATEGORY_STR "Synth"
@@ -44,7 +44,7 @@
 #define VST3_SUBCATEGORY "Instrument|Synth"
 #define CLAP_MANUAL_URL "https://iplug2.github.io/manuals/example_manual.pdf"
 #define CLAP_SUPPORT_URL "https://github.com/iPlug2/iPlug2/wiki"
-#define CLAP_DESCRIPTION "iPlug2 instrument example"
+#define CLAP_DESCRIPTION "CASIO SW-10 iPlug2 edition"
 #define CLAP_FEATURES "instrument"//, "synth"
 
 #define APP_NUM_CHANNELS 2
