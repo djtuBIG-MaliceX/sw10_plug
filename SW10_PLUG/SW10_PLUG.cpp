@@ -170,8 +170,8 @@ SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
   GetParam(kParamSampleRate)->InitEnum("SampleRate", 2., { "11025", "22050", "44100", "16538", "48000" });
   GetParam(kParamPolyphony)->InitEnum("Polyphony", 4., {"24", "32", "48", "64", "128"});
   GetParam(kParamReverbMode)->InitEnum("Reverb Mode", 0., { "Off", "Reverb 1", "Reverb 2" });
-  GetParam(kParamPitchBendRange)->InitInt("PitchBend Range", 2, 0, 127, "semitones", IParam::kFlagsNone, "ADSR");
-  GetParam(kParamDecay)->InitDouble("Decay", 10., 1., 1000., 0.1, "ms", IParam::kFlagsNone, "ADSR", IParam::ShapePowCurve(3.));
+  GetParam(kParamPitchBendRange)->InitInt("P.Bend Rng", 2, 0, 127, "semitones", IParam::kFlagsNone, "ADSR");
+  GetParam(kParamDecay)->InitInt("Velocity Curve", 6, 0, 11, "", IParam::kFlagsNone, "ADSR");
   GetParam(kParamSustain)->InitDouble("Sustain", 50., 0., 100., 1, "%", IParam::kFlagsNone, "ADSR");
   GetParam(kParamRelease)->InitDouble("Release", 10., 2., 1000., 0.1, "ms", IParam::kFlagsNone, "ADSR");
   GetParam(kParamBufferRenderMode)->InitEnum("Render Mode", 1, {"Off", "Low Latency", "Original Driver"});
@@ -212,8 +212,8 @@ SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
     pGraphics->AttachControl(new IVKnobControl(controls.GetGridCell(2, 1, 4).GetCentredInside(90), kParamReverbMode, "Reverb"), kNoTag, "Reverb")->DisablePrompt(false);
     pGraphics->AttachControl(new IVKnobControl(controls.GetGridCell(3, 1, 4).GetCentredInside(90), kParamBufferRenderMode, "RenderMode"), kNoTag, "RenderMode")->DisablePrompt(false);
     const IRECT sliders = b.GetGridCell(1, 4, 3); //.Union(controls.GetGridCell(3, 2, 6)).Union(controls.GetGridCell(4, 1, 4));
-    pGraphics->AttachControl(new IVSliderControl(sliders.GetGridCell(0, 1, 4), kParamPitchBendRange, "PitchBend Range"));
-    //pGraphics->AttachControl(new IVSliderControl(sliders.GetGridCell(1, 1, 4).GetMidHPadded(30.), kParamDecay, "Decay"));
+    pGraphics->AttachControl(new IVSliderControl(sliders.GetGridCell(0, 1, 4), kParamPitchBendRange, "P.Bend Rng"));
+    pGraphics->AttachControl(new IVSliderControl(sliders.GetGridCell(1, 1, 4), kParamDecay, "Vel. Curve"));
     //pGraphics->AttachControl(new IVSliderControl(sliders.GetGridCell(2, 1, 4).GetMidHPadded(30.), kParamSustain, "Sustain"));
     //pGraphics->AttachControl(new IVSliderControl(sliders.GetGridCell(3, 1, 4).GetMidHPadded(30.), kParamRelease, "Release"));
     pGraphics->AttachControl(new IVLEDMeterControl<2>(b.GetFromRight(100).GetPadded(-5).GetReducedFromBottom(100)), kCtrlTagMeter);
@@ -461,6 +461,9 @@ void SW10_PLUG::OnParamChange(int paramIdx)
       lsgWrite(data, 3);
       break;
     }
+    case kParamDecay:
+      VLSG_SetParameter(PARAMETER_VelocityFunc, 0x40 + value);
+      break;
   }
 }
 

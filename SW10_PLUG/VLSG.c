@@ -522,6 +522,9 @@ VLSG_API_(VLSG_Bool) VLSG_SetParameter(uint32_t type, uintptr_t value)
             }
             return VLSG_SetEffect(1);
 
+        case PARAMETER_VelocityFunc:  // Sysex 0x40 but yeah don't care
+            return VLSG_SetVelocityFunc(value & 0xF);
+
         default:
             return VLSG_FALSE;
     }
@@ -607,6 +610,15 @@ VLSG_API_(VLSG_Bool) VLSG_SetEffect(unsigned int effect)
     }
     SetReverbShift(1);
     EnableReverb();
+    return VLSG_TRUE;
+}
+
+VLSG_API_(VLSG_Bool) VLSG_SetVelocityFunc(unsigned int curveIdx)
+{
+    if (curveIdx < 0 || curveIdx >= 11)
+      curveIdx = 6;
+    
+    velocity_func = curveIdx;
     return VLSG_TRUE;
 }
 
@@ -1834,6 +1846,9 @@ static void SystemExclusive(void)
                 return;
             case 0x4A:
                 velocity_func = 10;
+                return;
+            case 0x4B: // Experimental
+                velocity_func = 11;
                 return;
             default:
                 break;

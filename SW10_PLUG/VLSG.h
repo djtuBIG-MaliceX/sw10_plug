@@ -68,6 +68,7 @@ enum ParameterType
     PARAMETER_Frequency     = 3,
     PARAMETER_Polyphony     = 4,
     PARAMETER_Effect        = 5,
+    PARAMETER_VelocityFunc = 6, // Experimental
 };
 
 
@@ -100,6 +101,9 @@ VLSG_API_(VLSG_Bool) VLSG_SetPolyphony(unsigned int poly);
 
 VLSG_PFN_(VLSG_Bool, VLSG_SETEFFECT)(unsigned int effect);
 VLSG_API_(VLSG_Bool) VLSG_SetEffect(unsigned int effect);
+
+VLSG_PFN_(VLSG_Bool, VLSG_SETVELOCITYCURVE)(unsigned int curveIdx);
+VLSG_API_(VLSG_Bool) VLSG_SetVelocityFunc(unsigned int curveIdx);
 
 VLSG_PFN_(VLSG_Bool, VLSG_INIT)(void);
 VLSG_API_(VLSG_Bool) VLSG_Init(void);
