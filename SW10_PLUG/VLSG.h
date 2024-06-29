@@ -22,8 +22,7 @@
  *
  */
 
-#if !defined(_VLSG_H_INCLUDED_)
-#define _VLSG_H_INCLUDED_
+#pragma once
 
 #include <stdint.h>
 
@@ -122,9 +121,10 @@ int32_t VLSG_PlaybackStop(void);
 void VLSG_AddMidiData(uint8_t *ptr, uint32_t len);
 int32_t VLSG_FillOutputBuffer(uint32_t output_buffer_counter);
 
+void ProcessMidiData(void);
+void ProcessPhase(void);
+
 #ifdef __cplusplus
 }
-#endif
-
 #endif
 

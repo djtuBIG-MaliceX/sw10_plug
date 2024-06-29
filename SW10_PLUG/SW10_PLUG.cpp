@@ -107,8 +107,10 @@ static uint8_t* load_rom_file(const char* romname)
 
 static void lsgWrite(uint8_t* event, unsigned int length)
 {
-  const DWORD time = lsgGetTime();
-  const BYTE* p = reinterpret_cast<const BYTE*>(event);
+  static uint32_t prevTime = 0;
+  const uint32_t time = lsgGetTime();
+  const uint8_t *p = reinterpret_cast<const BYTE*>(event);
+
   for (; length > 0; length--, p++) {
     VLSG_Write(&time, 4);
     VLSG_Write(p, 1);
@@ -159,7 +161,7 @@ static void stop_synth(void)
 
 SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
 : iplug::Plugin(info, MakeConfig(kNumParams, kNumPresets)),
-  bufferMode(2)
+  bufferMode(1)
 {
   start_synth();
 
@@ -170,7 +172,7 @@ SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
   GetParam(kParamDecay)->InitDouble("Decay", 10., 1., 1000., 0.1, "ms", IParam::kFlagsNone, "ADSR", IParam::ShapePowCurve(3.));
   GetParam(kParamSustain)->InitDouble("Sustain", 50., 0., 100., 1, "%", IParam::kFlagsNone, "ADSR");
   GetParam(kParamRelease)->InitDouble("Release", 10., 2., 1000., 0.1, "ms", IParam::kFlagsNone, "ADSR");
-  GetParam(kParamLFOShape)->InitEnum("LFO Shape", 2, {"Off", "Low Latency", "Listener Mode"});
+  GetParam(kParamLFOShape)->InitEnum("LFO Shape", 1, {"Off", "Low Latency", "Listener Mode"});
   GetParam(kParamLFORateHz)->InitFrequency("LFO Rate", 1., 0.01, 40.);
   GetParam(kParamLFORateTempo)->InitEnum("LFO Rate", LFO<>::k1, {LFO_TEMPODIV_VALIST});
   GetParam(kParamLFORateMode)->InitBool("LFO Sync", true);
@@ -412,6 +414,9 @@ void SW10_PLUG::ProcessMidiMsg(const IMidiMsg& msg)
     msg.PrintMsg();
     break;
   }
+
+  //// Fuck it, process every single event.
+  //ProcessMidiData();
 }
 
 void SW10_PLUG::OnParamChange(int paramIdx)
@@ -445,6 +450,8 @@ bool SW10_PLUG::OnMessage(int msgTag, int ctrlTag, int dataSize, const void* pDa
   {
     const int bendRange = *static_cast<const int*>(pData);
     //mDSP.mSynth.SetPitchBendRange(bendRange);
+
+    // TODO send 0-0-pData  RPN event
     
   }
   

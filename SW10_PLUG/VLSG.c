@@ -24,12 +24,14 @@
 
 #include <stddef.h>
 #include <string.h>
+#include <limits.h>
 #include "VLSG.h"
 
 #ifdef _MSC_VER
 #define inline __inline
 #include <intrin.h>
 #endif
+
 
 #define MIDI_CHANNELS 16
 #define DRUM_CHANNEL 9
@@ -416,13 +418,14 @@ VLSG_API_(void) VLSG_SetFunc_GetTime(VLSG_GETTIME get_time)
     get_time_func = get_time;
 }
 
+// Private functions
 static int32_t InitializeVelocityFunc(void);
 static int32_t EMPTY_DeinitializeVelocityFunc(void);
 static int32_t InitializeVariables(void);
 static int32_t EMPTY_DeinitializeVariables(void);
 static void CountActiveVoices(void);
 static void SetMaximumVoices(int maximum_voices);
-static void ProcessMidiData(void);
+//static void ProcessMidiData(void);
 static Voice_Data *FindAvailableVoice(int32_t channel_num_2, int32_t note_number);
 static Voice_Data *FindVoice(int32_t channel_num_2, int32_t note_number);
 static void NoteOff(void);
@@ -752,10 +755,8 @@ VLSG_API_(int32_t) VLSG_Buffer(uint32_t output_buffer_counter)
 // Seriously CBF that hardcoded buffer BS so writing the output directly on demand.
 VLSG_API_(int32_t) VLSG_BufferVst(uint32_t output_buffer_counter, double** output, int nFrames)
 {
-  uint32_t time1, value1, time2, time3, offset1;
+  uint32_t time1, value1, time2, time3;
   int counter;
-  uint8_t* output_ptr;
-  uint32_t time4;
 
 
   time1 = VLSG_GetTime();
@@ -796,9 +797,11 @@ VLSG_API_(int32_t) VLSG_BufferVst(uint32_t output_buffer_counter, double** outpu
     dword_C0000004 = (time3 >> 3) + ((time3 & 4) >> 2);
   }
 
-  offset1 = 0;
+  uint32_t offset1 = 0;
 
   // TODO - render sub-buffers more precisely irrespective of nFrames size
+  static int phaseAcc = INT_MIN;
+
   //int quant = (nFrames >> 2);
   int quant = output_size_para / 4;
   //int quant = nFrames;
@@ -811,18 +814,24 @@ VLSG_API_(int32_t) VLSG_BufferVst(uint32_t output_buffer_counter, double** outpu
     if (frames_left < quant)
       quant = frames_left;
 
-    ProcessMidiData();
-    ProcessPhase();
+    ProcessMidiData();  // in case anything missed
+
+    // Do not progress envelope phase until after 256 frames (as per original hardcoded BS)
+    if (phaseAcc == INT_MIN || phaseAcc >= 256) {
+      ProcessPhase();
+      phaseAcc = (INT_MIN) ? 0 : (phaseAcc - 256);
+    } else {
+      phaseAcc += quant;
+    }
     GenerateOutputDataVst(output, offset1, offset1 + quant);
     offset1 += quant;
-
-    dword_C0000000++;
-    system_time_1 = (((uint32_t)(dword_C0000000 * dword_C0000004)) >> 9) + dword_C0000008;
+    //dword_C0000000++;
+    //system_time_1 = (((uint32_t)(dword_C0000000 * dword_C0000004)) >> 9) + dword_C0000008;
+    system_time_1 = VLSG_GetTime();
   }
 
   CountActiveVoices();
   maximum_polyphony = maximum_polyphony_new_value;
-
   return current_polyphony;
 }
 
@@ -2440,6 +2449,8 @@ static void voice_set_amp(Voice_Data *voice_data_ptr)
     voice_set_panpot(voice_data_ptr);
 }
 
+// Note: phase processing has to do with envelope states over time. do not over-process or the
+//       states will happen either too quickly or too slowly.
 static void ProcessPhase(void)
 {
     int phase, index, value;
