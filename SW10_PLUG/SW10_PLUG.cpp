@@ -115,6 +115,7 @@ static void lsgWrite(uint8_t* event, unsigned int length)
     VLSG_Write(&time, 4);
     VLSG_Write(p, 1);
   }
+  ProcessMidiData();
 }
 
 static int start_synth(void)
@@ -417,8 +418,8 @@ void SW10_PLUG::ProcessMidiMsg(const IMidiMsg& msg)
     break;
   }
 
-  //// Fuck it, process every single event.
-  //ProcessMidiData();
+  // Fuck it, process every single event.
+  ProcessMidiData();
 }
 
 void SW10_PLUG::OnParamChange(int paramIdx)

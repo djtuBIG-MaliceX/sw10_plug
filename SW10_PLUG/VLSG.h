@@ -121,8 +121,8 @@ int32_t VLSG_PlaybackStop(void);
 void VLSG_AddMidiData(uint8_t *ptr, uint32_t len);
 int32_t VLSG_FillOutputBuffer(uint32_t output_buffer_counter);
 
-void ProcessMidiData(void);
-void ProcessPhase(void);
+VLSG_API_(void) ProcessMidiData(void);
+VLSG_API_(void) ProcessPhase(void);
 
 #ifdef __cplusplus
 }

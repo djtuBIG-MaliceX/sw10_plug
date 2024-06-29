@@ -1,6 +1,7 @@
 /**
  *
  *  Copyright (C) 2022 Roman Pauer
+ *  Copyright (C) 2024 James Alan Nguyen
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy of
  *  this software and associated documentation files (the "Software"), to deal in
@@ -450,7 +451,7 @@ static void voice_set_panpot(Voice_Data *voice_data_ptr);
 static void voice_set_flags(Voice_Data *voice_data_ptr);
 static void voice_set_flags2(Voice_Data *voice_data_ptr);
 static void voice_set_amp(Voice_Data *voice_data_ptr);
-static void ProcessPhase(void);
+//static void ProcessPhase(void);
 static int32_t sub_C0036FB0(int16_t value3);
 static void sub_C0036FE0(void);
 static void sub_C0037140(void);
@@ -735,7 +736,7 @@ VLSG_API_(int32_t) VLSG_Buffer(uint32_t output_buffer_counter)
     
     for (counter = 4; counter != 0; counter--)
     {
-        ProcessMidiData();
+        //ProcessMidiData();
         ProcessPhase();
         GenerateOutputData(output_ptr, offset1, offset1 + output_size_para);
         offset1 += output_size_para;
@@ -779,8 +780,8 @@ VLSG_API_(int32_t) VLSG_BufferVst(uint32_t output_buffer_counter, double** outpu
   uint32_t offset1 = 0;
   static int phaseAcc = INT_MIN;
 
-  //int quant = (nFrames >> 2);
-  int quant = output_size_para / 4;
+  int quant = (nFrames >> 2);
+  //int quant = output_size_para / 4;
   //int quant = nFrames;
   int frames_left = nFrames;
   if (quant < 16) quant = 16;
@@ -790,7 +791,7 @@ VLSG_API_(int32_t) VLSG_BufferVst(uint32_t output_buffer_counter, double** outpu
     if (frames_left < quant)
       quant = frames_left;
 
-    ProcessMidiData();  // in case anything missed
+    //ProcessMidiData();  // in case anything missed
 
     // Do not progress envelope phase until after output_size_para frames (as per original hardcoded BS)
     if (phaseAcc == INT_MIN || phaseAcc >= output_size_para) {
@@ -1364,7 +1365,7 @@ static void SetMaximumVoices(int maximum_voices)
     recent_voice_index = 0;
 }
 
-static void ProcessMidiData(void)
+VLSG_API_(void) ProcessMidiData(void)
 {
     uint8_t midi_value;
 
@@ -2315,10 +2316,10 @@ static uint8_t GetValueFromMidiDataBuffer(void)
         return 0xFF;
     }
 
-    if (event_time + 100 > system_time_1)
+    /*if (event_time + 100 > system_time_1)
     {
         return 0xFF;
-    }
+    }*/
 
     result = midi_data_buffer[read_index];
     midi_data_read_index = (read_index + 1) & 0xFFFF;
@@ -2427,7 +2428,7 @@ static void voice_set_amp(Voice_Data *voice_data_ptr)
 
 // Note: phase processing has to do with envelope states over time. do not over-process or the
 //       states will happen either too quickly or too slowly.
-static void ProcessPhase(void)
+VLSG_API_(void) ProcessPhase(void)
 {
     int phase, index, value;
     Channel_Data *channel;
@@ -2551,7 +2552,7 @@ static int32_t sub_C0036FB0(int16_t value3)
     return value1;
 }
 
-static void sub_C0036FE0(void)
+static void sub_C0036FE0(void) // ADSR envelope-related
 {
     int index;
     int32_t value1, value2, value3;
@@ -2597,7 +2598,7 @@ static void sub_C0036FE0(void)
     }
 }
 
-static void sub_C0037140(void)
+static void sub_C0037140(void)  // ADSR envelope-related
 {
     int index, choice, index2;
     int32_t value1, value2, value3;
