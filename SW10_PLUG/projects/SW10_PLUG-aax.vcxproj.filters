@@ -65,7 +65,7 @@
     <ClCompile Include="..\..\iPlug2\IGraphics\Drawing\IGraphicsSkia.cpp">
       <Filter>IGraphics\Drawing</Filter>
     </ClCompile>
-    <ClCompile Include="..\VLSG.c" />
+    <ClCompile Include="..\VLSG.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\SW10_PLUG.h" />

@@ -28,6 +28,7 @@
 #include <limits.h>
 #include "VLSG.h"
 
+
 #ifdef _MSC_VER
 #define inline __inline
 #include <intrin.h>
@@ -753,7 +754,7 @@ VLSG_API_(int32_t) VLSG_Buffer(uint32_t output_buffer_counter)
         GenerateOutputData(output_ptr, offset1, offset1 + output_size_para);
         offset1 += output_size_para;
         dword_C0000000++;
-        system_time_1 = (((uint32_t)(dword_C0000000 * dword_C0000004)) >> 9) + dword_C0000008;
+        //system_time_1 = (((uint32_t)(dword_C0000000 * dword_C0000004)) >> 9) + dword_C0000008;
     }
 
     time4 = VLSG_GetTime();
@@ -783,20 +784,20 @@ VLSG_API_(int32_t) VLSG_Buffer(uint32_t output_buffer_counter)
 }
 
 // Seriously CBF that hardcoded buffer BS so writing the output directly on demand.
-VLSG_API_(int32_t) VLSG_BufferVst(uint32_t output_buffer_counter, double** output, int nFrames)
+VLSG_API_(int32_t) VLSG_BufferVst(uint32_t output_buffer_counter, double** output, int nFrames, iplug::IMidiQueue& mMidiQueue, iplug::IMidiQueueBase<iplug::ISysEx>& mSysExQueue)
 {
-  if (output_buffer_counter == 0) {
+  /*if (output_buffer_counter == 0) {
     system_time_1 = VLSG_GetTime();
-  }
+  }*/
   
   uint32_t offset1 = 0;
   static int phaseAcc = INT_MIN;
 
-  int quant = (nFrames >> 2);
+  int quant = (nFrames > output_size_para) ? output_size_para : 1;
   //int quant = output_size_para / 4;
   //int quant = nFrames;
   int frames_left = nFrames;
-  if (quant < 16) quant = 16;
+  //if (quant < 16) quant = 16;
   for (; frames_left > 0; frames_left -= quant)
   {
     // If uneven quants, get the correct range
@@ -804,6 +805,13 @@ VLSG_API_(int32_t) VLSG_BufferVst(uint32_t output_buffer_counter, double** outpu
       quant = frames_left;
 
     //ProcessMidiData();  // in case anything missed
+    while (!mMidiQueue.Empty()) {
+      auto msg = mMidiQueue.Peek();
+      if (msg.mOffset > offset1) break; // assume chronological order
+
+      ProcessMidiDataVst(msg);
+      mMidiQueue.Remove();
+    }
 
     // Do not progress envelope phase until after output_size_para frames (as per original hardcoded BS)
     if (phaseAcc == INT_MIN || phaseAcc >= output_size_para) {
@@ -814,9 +822,10 @@ VLSG_API_(int32_t) VLSG_BufferVst(uint32_t output_buffer_counter, double** outpu
     }
     GenerateOutputDataVst(output, offset1, offset1 + quant);
     offset1 += quant;
+
     //dword_C0000000++;
     //system_time_1 = (((uint32_t)(dword_C0000000 * dword_C0000004)) >> 9) + dword_C0000008;
-    system_time_1 = VLSG_GetTime();
+    //0system_time_1 = VLSG_GetTime();
   }
 
   CountActiveVoices();
@@ -1479,6 +1488,231 @@ VLSG_API_(void) ProcessMidiData(void)
 
         event_length = 0;
     }
+
+    system_time_1 = VLSG_GetTime();
+}
+
+static uint8_t* parseMidiMsg(iplug::IMidiMsg& msg)
+{
+  iplug::IMidiMsg::EStatusMsg status = msg.StatusMsg();
+
+  // TODO port to msg.mData1/2 calls
+  static uint8_t data[12];
+  int length = 0;
+  auto sampOffset = msg.mOffset; // TODO how to use this?
+  uint8_t chan = msg.Channel() & 0xF;
+  uint8_t key = msg.NoteNumber() & 0x7F;
+  uint8_t vel = msg.Velocity() & 0x7F;
+  uint8_t prog = msg.Program() & 0x7F;
+
+  switch (status)
+  {
+  case iplug::IMidiMsg::kNoteOn:
+    data[0] = 0x90 | chan;
+    data[1] = key;
+    data[2] = vel;
+    length = 3;
+
+    //lsgWrite(data, length, sampOffset);
+
+    //printf("Note ON, channel:%d note:%d velocity:%d\n", chan, key, vel);
+    
+    break;
+
+  case iplug::IMidiMsg::kNoteOff:
+    data[0] = 0x80 | chan;
+    data[1] = key;
+    data[2] = vel;
+    length = 3;
+
+    //lsgWrite(data, length);
+
+    //printf("Note OFF, channel:%d note:%d velocity:%d\n", chan, key, vel);
+    
+    break;
+
+  case iplug::IMidiMsg::kControlChange: {
+    uint8_t cc = msg.ControlChangeIdx();
+    uint8_t ccVal = (uint8_t)(msg.ControlChange(msg.ControlChangeIdx()) * 127) & 0x7F; // assuming 7-bit
+    data[0] = 0xB0 | chan;
+    data[1] = cc & 0x7f;
+    data[2] = ccVal & 0x7f;
+
+    length = 3;
+
+    //lsgWrite(data, length);
+
+    //printf("Controller, channel:%d param:%d value:%d\n", chan, key, vel);
+    
+    break;
+  }
+
+  case iplug::IMidiMsg::kProgramChange:
+    data[0] = 0xC0 | chan;
+    data[1] = prog;
+    length = 2;
+
+    //lsgWrite(data, length);
+
+    //printf("Program change: channel:%d value:%d\n", chan, prog);
+    
+    break;
+
+  case iplug::IMidiMsg::kChannelAftertouch: {
+    uint8_t aft = msg.ChannelAfterTouch() & 0x7F;
+    data[0] = 0xD0 | chan;
+    data[1] = aft;
+    length = 2;
+
+    //lsgWrite(data, length);
+
+    //printf("Channel pressure: channel:%d value:%d\n", chan, aft);
+    
+    break;
+  }
+
+  case iplug::IMidiMsg::kPitchWheel: {
+    auto pbVal = msg.PitchWheel();
+    int pbValInt = (int)(pbVal * 8192) + 8192;
+
+    if (pbValInt > 16384) {
+      pbValInt = 16383;
+    }
+    else if (pbValInt < 0) {
+      pbValInt = 0;
+    }
+
+    data[0] = 0xE0 | chan;
+    data[1] = (pbValInt) & 0x7f;
+    data[2] = (pbValInt >> 7) & 0x7f;
+    length = 3;
+
+    //lsgWrite(data, length);
+
+    //printf("Pitch bend: channel:%d value:%d\n", chan, pbVal);
+    
+    break;
+  }
+
+  default:
+    //msg.PrintMsg();
+    break;
+  }
+
+  // FF unused bytes
+  for (int i = length; i < 12; ++i) {
+    data[i] = 0xFF;
+  }
+
+  return data;
+}
+
+VLSG_API_(void) ProcessMidiDataVst(iplug::IMidiMsg& msg)
+{
+  uint8_t *midi_value_ptr = parseMidiMsg(msg);
+
+  while (1)
+  {
+    uint8_t midi_value = *midi_value_ptr;
+    ++midi_value_ptr;
+
+    if (midi_value == 0xFF) break; // Stop processing
+
+    if (midi_value > 0xF7) continue; // Drop MIDI data, continue to next.
+
+    if (midi_value == 0xF7)
+    {
+      if (event_data[0] != 0xF0) continue;
+    }
+    else if ((midi_value & 0x80) != 0)
+    {
+      event_length = 0;
+      event_type = midi_value & 0xF0;
+      event_data[0] = midi_value;
+      channel_data_ptr = &(channel_data[midi_value & 0x0F]);
+      program_data_ptr = &(program_data[(midi_value & 0x0F) * 2]);
+
+      continue;
+    }
+    else
+    {
+      event_length++;
+      if (event_length >= 32) continue;
+
+      event_data[event_length] = midi_value;
+
+      if (event_data[0] == 0xF0) continue;
+
+      if ((event_type != 0xC0) && (event_type != 0xD0) && (event_length != 2)) continue;
+    }
+
+    switch (event_type)
+    {
+    case 0x80: // Note Off
+      NoteOff();
+      break;
+
+    case 0x90: // Note On
+      if (event_data[2] != 0)
+      {
+        NoteOn(0);
+
+        if (program_data_ptr->field_02 & 0x8000)
+        {
+          NoteOn(1);
+        }
+      }
+      else
+      {
+        NoteOff();
+      }
+      break;
+
+    case 0xB0: // Controller
+      ControlChange();
+      break;
+
+    case 0xC0: // Program Change
+      if ((event_data[0] & 0x0F) == DRUM_CHANNEL)
+      {
+        int drum_kit_index;
+
+        for (drum_kit_index = 0; drum_kit_index < 8; drum_kit_index++)
+        {
+          if (drum_kits[drum_kit_index] == event_data[1]) break;
+        }
+        if (drum_kit_index >= 8) break;
+
+        channel_data_ptr->program_change = drum_kit_numbers[drum_kit_index];
+        ProgramChange(program_data_ptr, drum_kit_numbers[drum_kit_index]);
+      }
+      else
+      {
+        channel_data_ptr->program_change = event_data[1];
+        ProgramChange(program_data_ptr, event_data[1]);
+      }
+      break;
+
+    case 0xD0: // Channel Pressure
+      channel_data_ptr->channel_pressure = event_data[1];
+      break;
+
+    case 0xE0: // Pitch Bend
+      channel_data_ptr->pitch_bend = event_data[1] + ((event_data[2] - 64) << 7);
+      break;
+
+    case 0xF0: // SysEx
+      SystemExclusive();
+      break;
+
+    default:
+      break;
+    }
+
+    event_length = 0;
+  }
+
+  system_time_1 = VLSG_GetTime();
 }
 
 static Voice_Data *FindAvailableVoice(int32_t channel_num_2, int32_t note_number)
@@ -1932,7 +2166,15 @@ static void GenerateOutputDataVst(double **output_ptr, uint32_t offset1, uint32_
   int32_t reverb_value3;
   int32_t reverb_value4;
 
-  DefragmentVoices();
+  static int callCount = 0;
+
+  if (callCount == 0) {
+    DefragmentVoices();
+  }
+  ++callCount;
+  if (callCount >= output_size_para) {
+    callCount = 0;
+  }
 
   max_active_index = -1;
   for (index1 = 0; index1 < maximum_polyphony; index1++)

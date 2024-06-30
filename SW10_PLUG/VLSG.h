@@ -25,6 +25,7 @@
 #pragma once
 
 #include <stdint.h>
+#include "IPlug_include_in_plug_hdr.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -118,7 +119,7 @@ VLSG_PFN_(int32_t, VLSG_BUFFER)(uint32_t output_buffer_counter);
 VLSG_API_(int32_t) VLSG_Buffer(uint32_t output_buffer_counter);
 
 // Invasive workaround
-VLSG_API_(int32_t) VLSG_BufferVst(uint32_t output_buffer_counter, double** output, int nFrames);
+VLSG_API_(int32_t) VLSG_BufferVst(uint32_t output_buffer_counter, double** output, int nFrames, iplug::IMidiQueue& mMidiQueue, iplug::IMidiQueueBase<iplug::ISysEx>& mSysExQueue);
 
 int32_t VLSG_PlaybackStart(void);
 int32_t VLSG_PlaybackStop(void);
@@ -126,6 +127,7 @@ void VLSG_AddMidiData(uint8_t *ptr, uint32_t len);
 int32_t VLSG_FillOutputBuffer(uint32_t output_buffer_counter);
 
 VLSG_API_(void) ProcessMidiData(void);
+VLSG_API_(void) ProcessMidiDataVst(iplug::IMidiMsg& msg);
 VLSG_API_(void) ProcessPhase(void);
 
 #ifdef __cplusplus

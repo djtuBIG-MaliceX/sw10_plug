@@ -397,7 +397,7 @@
     <ClCompile Include="..\..\iPlug2\IPlug\VST3\IPlugVST3.cpp" />
     <ClCompile Include="..\..\iPlug2\IPlug\VST3\IPlugVST3_ProcessorBase.cpp" />
     <ClCompile Include="..\SW10_PLUG.cpp" />
-    <ClCompile Include="..\VLSG.c" />
+    <ClCompile Include="..\VLSG.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="..\resources\main.rc" />

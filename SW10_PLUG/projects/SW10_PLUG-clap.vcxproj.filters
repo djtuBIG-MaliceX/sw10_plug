@@ -56,7 +56,7 @@
     <ClCompile Include="..\..\iPlug2\IPlug\Extras\Synth\VoiceAllocator.cpp">
       <Filter>IPlug\Extras\Synth</Filter>
     </ClCompile>
-    <ClCompile Include="..\VLSG.c" />
+    <ClCompile Include="..\VLSG.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="../config.h" />

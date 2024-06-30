@@ -1,6 +1,5 @@
 #include "SW10_PLUG.h"
 #include "IPlug_include_in_plug_src.h"
-#include "LFO.h"
 #include "VLSG.h"
 #include <sstream>
 
@@ -105,12 +104,12 @@ static uint8_t* load_rom_file(const char* romname)
   return mem;
 }
 
-static void lsgWrite(uint8_t* event, unsigned int length)
+static void lsgWrite(uint8_t* event, unsigned int length, int offset = 0)
 {
-  static uint32_t prevTime = 0;
   const uint32_t time = lsgGetTime();
   const uint8_t *p = reinterpret_cast<const BYTE*>(event);
 
+  // Old method
   for (; length > 0; length--, p++) {
     VLSG_Write(&time, 4);
     VLSG_Write(p, 1);
@@ -176,7 +175,7 @@ SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
   GetParam(kParamRelease)->InitDouble("Release", 10., 2., 1000., 0.1, "ms", IParam::kFlagsNone, "ADSR");
   GetParam(kParamBufferRenderMode)->InitEnum("Render Mode", 1, {"Off", "Low Latency", "Original Driver"});
   GetParam(kParamLFORateHz)->InitFrequency("LFO Rate", 1., 0.01, 40.);
-  GetParam(kParamLFORateTempo)->InitEnum("LFO Rate", LFO<>::k1, {LFO_TEMPODIV_VALIST});
+  //GetParam(kParamLFORateTempo)->InitEnum("LFO Rate", LFO<>::k1, {LFO_TEMPODIV_VALIST});
   GetParam(kParamLFORateMode)->InitBool("LFO Sync", true);
   GetParam(kParamLFODepth)->InitPercentage("LFO Depth");
     
@@ -250,7 +249,7 @@ void SW10_PLUG::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 
   if (bufferMode == 1) {
     // Attempt 1 - directly render as requested to output buffer (without respecting internal timer code)
-    VLSG_BufferVst(outbuf_counter, outputs, nFrames);
+    VLSG_BufferVst(outbuf_counter, outputs, nFrames, mMidiQueue, mSysExQueue);
   } else if (bufferMode == 2) {
     // Attempt 2 - render the chunks based on existing hard-coded sample sizes, but only dequeue on demand.
     if (renderedSampleQueueSize <= 0) {
@@ -281,8 +280,10 @@ void SW10_PLUG::OnIdle()
 
 void SW10_PLUG::OnReset()
 {
-  //mDSP.Reset(GetSampleRate(), GetBlockSize());
+  // TODO reset VLSG synth state
   mMeterSender.Reset(GetSampleRate());
+  mMidiQueue.Resize(GetBlockSize());
+  mSysExQueue.Resize(GetBlockSize());
 }
 
 void SW10_PLUG::ProcessSysEx(const ISysEx& msg)
@@ -292,7 +293,8 @@ void SW10_PLUG::ProcessSysEx(const ISysEx& msg)
   int length = msg.mSize;
   uint8_t *data = (uint8_t*)(msg.mData);
 
-  lsgWrite(data, length);
+  //lsgWrite(data, length);
+  mSysExQueue.Add(msg);
   printf("SysEx (fragment) of size %d\n", length);
 }
 
@@ -300,6 +302,9 @@ void SW10_PLUG::ProcessMidiMsg(const IMidiMsg& msg)
 {
   TRACE;
   
+  mMidiQueue.Add(msg);
+#if 0
+
   IMidiMsg::EStatusMsg status = msg.StatusMsg();
 
   // TODO port to msg.mData1/2 calls
@@ -319,7 +324,7 @@ void SW10_PLUG::ProcessMidiMsg(const IMidiMsg& msg)
     data[2] = vel;
     length = 3;
 
-    lsgWrite(data, length);
+    lsgWrite(data, length, sampOffset);
 
     printf("Note ON, channel:%d note:%d velocity:%d\n", chan, key, vel);
     SendMidiMsg(msg);
@@ -417,9 +422,9 @@ void SW10_PLUG::ProcessMidiMsg(const IMidiMsg& msg)
     msg.PrintMsg();
     break;
   }
-
+#endif
   // Fuck it, process every single event.
-  ProcessMidiData();
+  /*ProcessMidiData();*/
 }
 
 void SW10_PLUG::OnParamChange(int paramIdx)

@@ -372,7 +372,7 @@
     <ClCompile Include="..\..\iPlug2\IPlug\IPlugProcessor.cpp" />
     <ClCompile Include="..\..\iPlug2\IPlug\IPlugTimer.cpp" />
     <ClCompile Include="..\SW10_PLUG.cpp" />
-    <ClCompile Include="..\VLSG.c" />
+    <ClCompile Include="..\VLSG.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="..\resources\main.rc" />

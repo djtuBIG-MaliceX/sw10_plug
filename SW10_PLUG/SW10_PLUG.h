@@ -64,6 +64,8 @@ public:
 
 private:
   IPeakAvgSender<2> mMeterSender;
+  IMidiQueue mMidiQueue;
+  IMidiQueueBase<ISysEx> mSysExQueue;
   int bufferMode;
 #endif
 };
