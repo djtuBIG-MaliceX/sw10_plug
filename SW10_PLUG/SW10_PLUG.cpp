@@ -295,8 +295,12 @@ void SW10_PLUG::ProcessSysEx(const ISysEx& msg)
   int length = msg.mSize;
   uint8_t *data = (uint8_t*)(msg.mData);
 
-  //lsgWrite(data, length);
-  mSysExQueue.Add(msg);
+  if (bufferMode == 1) {
+    mSysExQueue.Add(msg);
+  } else {
+    lsgWrite(data, length);
+  }
+  
   printf("SysEx (fragment) of size %d\n", length);
 }
 
