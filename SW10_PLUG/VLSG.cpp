@@ -151,7 +151,7 @@ static uint32_t recent_voice_index;
 static Program_Data *program_data_ptr;
 static Channel_Data *channel_data_ptr;
 static uint32_t event_type;
-static int32_t event_length;
+static int32_t event_length = 0;
 static int32_t reverb_data_buffer[32768];
 static uint32_t reverb_data_index;
 static int32_t is_reverb_enabled;
@@ -790,7 +790,7 @@ VLSG_API_(int32_t) VLSG_BufferVst(uint32_t output_buffer_counter, double** outpu
     system_time_1 = VLSG_GetTime();
   }*/
   
-  uint32_t offset1 = 0;
+  int32_t offset1 = 0;
   static int phaseAcc = INT_MIN;
 
   int quant = (nFrames > output_size_para) ? output_size_para : 1;
@@ -1617,11 +1617,16 @@ static uint8_t* parseMidiMsg(iplug::IMidiMsg& msg)
 VLSG_API_(void) ProcessSysExDataVst(iplug::ISysEx& msg)
 {
   uint8_t* sysex_value_ptr = (uint8_t*)msg.mData;
+  uint32_t count = 0;
 
-  while (1)
+  while (count < msg.mSize)
   {
     uint8_t syx_value = *sysex_value_ptr;
-    ++sysex_value_ptr;
+    if (count < msg.mSize) {
+      ++sysex_value_ptr;
+    }
+    ++count;
+    
 
     if (syx_value == 0xFF) break; // Stop processing
 
@@ -1673,7 +1678,7 @@ VLSG_API_(void) ProcessMidiDataVst(iplug::IMidiMsg& msg)
 {
   uint8_t *midi_value_ptr = parseMidiMsg(msg);
 
-  while (1)
+  while (true)
   {
     uint8_t midi_value = *midi_value_ptr;
     ++midi_value_ptr;
