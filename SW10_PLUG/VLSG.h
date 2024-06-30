@@ -128,6 +128,7 @@ int32_t VLSG_FillOutputBuffer(uint32_t output_buffer_counter);
 
 VLSG_API_(void) ProcessMidiData(void);
 VLSG_API_(void) ProcessMidiDataVst(iplug::IMidiMsg& msg);
+VLSG_API_(void) ProcessSysExDataVst(iplug::ISysEx& msg);
 VLSG_API_(void) ProcessPhase(void);
 
 #ifdef __cplusplus

@@ -146,7 +146,7 @@ static uint32_t dword_C0000004;
 static uint32_t dword_C0000008;
 static int32_t output_size_para;
 static uint32_t system_time_2;
-static uint8_t event_data[32];
+static uint8_t event_data[256];
 static uint32_t recent_voice_index;
 static Program_Data *program_data_ptr;
 static Channel_Data *channel_data_ptr;
@@ -805,6 +805,14 @@ VLSG_API_(int32_t) VLSG_BufferVst(uint32_t output_buffer_counter, double** outpu
       quant = frames_left;
 
     //ProcessMidiData();  // in case anything missed
+    while (!mSysExQueue.Empty()) {
+      auto msg = mSysExQueue.Peek();
+      if (msg.mOffset > offset1) break; // assume chronological order
+
+      ProcessSysExDataVst(msg);
+      mSysExQueue.Remove();
+    }
+
     while (!mMidiQueue.Empty()) {
       auto msg = mMidiQueue.Peek();
       if (msg.mOffset > offset1) break; // assume chronological order
@@ -827,7 +835,6 @@ VLSG_API_(int32_t) VLSG_BufferVst(uint32_t output_buffer_counter, double** outpu
     //system_time_1 = (((uint32_t)(dword_C0000000 * dword_C0000004)) >> 9) + dword_C0000008;
     //0system_time_1 = VLSG_GetTime();
   }
-
   CountActiveVoices();
   maximum_polyphony = maximum_polyphony_new_value;
   return current_polyphony;
@@ -1414,7 +1421,7 @@ VLSG_API_(void) ProcessMidiData(void)
         else
         {
             event_length++;
-            if (event_length >= 32) continue;
+            if (event_length >= 256) continue;
 
             event_data[event_length] = midi_value;
 
@@ -1607,6 +1614,61 @@ static uint8_t* parseMidiMsg(iplug::IMidiMsg& msg)
   return data;
 }
 
+VLSG_API_(void) ProcessSysExDataVst(iplug::ISysEx& msg)
+{
+  uint8_t* sysex_value_ptr = (uint8_t*)msg.mData;
+
+  while (1)
+  {
+    uint8_t syx_value = *sysex_value_ptr;
+    ++sysex_value_ptr;
+
+    if (syx_value == 0xFF) break; // Stop processing
+
+    if (syx_value > 0xF7) continue; // Drop MIDI data, continue to next.
+
+    if (syx_value == 0xF7)
+    {
+      if (event_data[0] != 0xF0) continue;
+    }
+    else if ((syx_value & 0x80) != 0)
+    {
+      event_length = 0;
+      event_type = syx_value & 0xF0;
+      event_data[0] = syx_value;
+      channel_data_ptr = &(channel_data[syx_value & 0x0F]);
+      program_data_ptr = &(program_data[(syx_value & 0x0F) * 2]);
+
+      continue;
+    }
+    else
+    {
+      event_length++;
+      if (event_length >= 256) continue;
+
+      event_data[event_length] = syx_value;
+
+      if (event_data[0] == 0xF0) continue;
+
+      if ((event_type != 0xC0) && (event_type != 0xD0) && (event_length != 2)) continue;
+    }
+
+    switch (event_type)
+    {
+    case 0xF0: // SysEx
+      SystemExclusive();
+      break;
+
+    default:
+      break;
+    }
+
+    event_length = 0;
+  }
+
+  system_time_1 = VLSG_GetTime();
+}
+
 VLSG_API_(void) ProcessMidiDataVst(iplug::IMidiMsg& msg)
 {
   uint8_t *midi_value_ptr = parseMidiMsg(msg);
@@ -1699,10 +1761,6 @@ VLSG_API_(void) ProcessMidiDataVst(iplug::IMidiMsg& msg)
 
     case 0xE0: // Pitch Bend
       channel_data_ptr->pitch_bend = event_data[1] + ((event_data[2] - 64) << 7);
-      break;
-
-    case 0xF0: // SysEx
-      SystemExclusive();
       break;
 
     default:

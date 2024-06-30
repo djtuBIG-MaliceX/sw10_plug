@@ -250,6 +250,8 @@ void SW10_PLUG::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
   if (bufferMode == 1) {
     // Attempt 1 - directly render as requested to output buffer (without respecting internal timer code)
     VLSG_BufferVst(outbuf_counter, outputs, nFrames, mMidiQueue, mSysExQueue);
+    mMidiQueue.Flush(nFrames);
+    mSysExQueue.Flush(nFrames);
   } else if (bufferMode == 2) {
     // Attempt 2 - render the chunks based on existing hard-coded sample sizes, but only dequeue on demand.
     if (renderedSampleQueueSize <= 0) {
