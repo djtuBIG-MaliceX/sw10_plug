@@ -303,9 +303,12 @@ void SW10_PLUG::ProcessSysEx(const ISysEx& msg)
 void SW10_PLUG::ProcessMidiMsg(const IMidiMsg& msg)
 {
   TRACE;
-  
-  mMidiQueue.Add(msg);
-#if 0
+
+  // Only for low latency mode
+  if (bufferMode == 1) {
+    mMidiQueue.Add(msg);
+    return;
+  }
 
   IMidiMsg::EStatusMsg status = msg.StatusMsg();
 
@@ -424,9 +427,8 @@ void SW10_PLUG::ProcessMidiMsg(const IMidiMsg& msg)
     msg.PrintMsg();
     break;
   }
-#endif
   // Fuck it, process every single event.
-  /*ProcessMidiData();*/
+  ProcessMidiData();
 }
 
 void SW10_PLUG::OnParamChange(int paramIdx)
