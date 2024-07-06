@@ -246,31 +246,23 @@ static const int32_t velocity_curves[12][128] =
 };
 static const uint8_t drum_kits[8] = { 0, 8, 16, 24, 25, 32, 40, 48 };
 static const uint8_t drum_kit_numbers[8] = { 0, 1, 2, 3, 4, 5, 6, 7 };
-static int32_t *reverb_data_ptr;
 static const int32_t dword_C00342C0[4] = { 0, 1, 2, -1 };
 static const uint16_t word_C00342D0[17] = { 0, 250, 561, 949, 1430, 2030, 2776, 3704, 4858, 6295, 8083, 10307, 13075, 16519, 20803, 26135, 32768 };
 
 
-static inline uint16_t READ_LE_UINT16(const uint8_t* ptr)
-{
-  return ptr[0] | (ptr[1] << 8);
-}
-
-
-uint32_t VLSG::VLSG_GetVersion(void)
+constexpr uint32_t VLSG::VLSG_GetVersion(void) const
 {
     return 0x103;
 }
 
-const char* VLSG::VLSG_GetName(void) const
+constexpr const char* VLSG::VLSG_GetName(void) const
 {
-    static const char VLSG_Name[] = "CASIO SW-10";
-    return VLSG_Name;
+    return "CASIO SW-10";
 }
 
 uint32_t VLSG::VLSG_GetTime(void)
 {
-  if (get_time_func != NULL)
+  if (get_time_func != nullptr)
     return get_time_func();
   return 0;
 }
@@ -683,7 +675,7 @@ int32_t VLSG::InitializeVelocityFunc(void)
     return 0;
 }
 
-int32_t VLSG::EMPTY_DeinitializeVelocityFunc(void)
+constexpr int32_t VLSG::EMPTY_DeinitializeVelocityFunc(void)
 {
     return 0;
 }
@@ -1671,7 +1663,7 @@ Voice_Data* VLSG::FindVoice(int32_t channel_num_2, int32_t note_number)
 
     }
 
-    return NULL;
+    return nullptr;
 }
 
 void VLSG::NoteOff(void)
@@ -1685,13 +1677,13 @@ void VLSG::NoteOff(void)
     }
 
     voice = FindVoice(2 * (event_data[0] & 0x0F), event_data[1]);
-    if (voice != NULL)
+    if (voice != nullptr)
     {
         VoiceNoteOff(voice);
     }
 
     voice = FindVoice(2 * (event_data[0] & 0x0F) + 1, event_data[1]);
-    if (voice != NULL)
+    if (voice != nullptr)
     {
         VoiceNoteOff(voice);
     }
@@ -1985,7 +1977,7 @@ int32_t VLSG::InitializeReverbBuffer(void)
 
 int32_t VLSG::DeinitializeReverbBuffer(void)
 {
-    reverb_data_ptr = NULL;
+    reverb_data_ptr = nullptr;
     return 0;
 }
 

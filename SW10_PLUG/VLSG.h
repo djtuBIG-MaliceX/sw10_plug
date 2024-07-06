@@ -164,12 +164,30 @@ enum Channel_Flags
   CHFLAG_Sustain = 0x8000,
 };
 
+inline void WRITE_LE_UINT16(uint8_t* ptr, uint16_t value)
+{
+  ptr[0] = value & 0xff;
+  ptr[1] = (value >> 8) & 0xff;
+}
+
+inline void WRITE_LE_UINT32(uint8_t* ptr, uint32_t value)
+{
+  ptr[0] = value & 0xff;
+  ptr[1] = (value >> 8) & 0xff;
+  ptr[2] = (value >> 16) & 0xff;
+  ptr[3] = (value >> 24) & 0xff;
+}
+
+inline uint16_t READ_LE_UINT16(const uint8_t* ptr)
+{
+  return ptr[0] | (ptr[1] << 8);
+}
 
 class VLSG
 {
 public:
-  uint32_t VLSG_GetVersion(void);
-  const char* VLSG_GetName(void) const;
+  constexpr uint32_t VLSG_GetVersion(void) const;
+  constexpr const char* VLSG_GetName(void) const;
   uint32_t VLSG_GetTime(void);
   void VLSG_SetFunc_GetTime(uint32_t (*get_time)());
   VLSG_Bool VLSG_SetParameter(uint32_t type, uintptr_t value);
@@ -196,7 +214,6 @@ public:
   void ProcessPhase(void);
 
 private:
-
   uint32_t dword_C0000000;
   uint32_t dword_C0000004;
   uint32_t dword_C0000008;
@@ -231,16 +248,15 @@ private:
   uint32_t output_buffer_size_samples;
   uint32_t output_buffer_size_bytes;
   uint32_t effect_param_value;
-
+  int32_t* reverb_data_ptr = nullptr;
   uint32_t(*get_time_func)();
 
   int32_t InitializeVelocityFunc(void);
-  int32_t EMPTY_DeinitializeVelocityFunc(void);
+  constexpr int32_t EMPTY_DeinitializeVelocityFunc(void);
   int32_t InitializeVariables(void);
   int32_t EMPTY_DeinitializeVariables(void);
   void CountActiveVoices(void);
   void SetMaximumVoices(int maximum_voices);
-  
   Voice_Data* FindAvailableVoice(int32_t channel_num_2, int32_t note_number);
   Voice_Data* FindVoice(int32_t channel_num_2, int32_t note_number);
   void NoteOff(void);

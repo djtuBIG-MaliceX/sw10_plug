@@ -22,7 +22,7 @@ enum EParams
   kParamPolyphony,
   kParamReverbMode,
   kParamPitchBendRange,
-  kParamDecay,
+  kParamVelocityFunction,
   kParamSustain,
   kParamRelease,
   kParamBufferRenderMode,
@@ -52,7 +52,6 @@ class SW10_PLUG final : public Plugin
 public:
   SW10_PLUG(const InstanceInfo& info);
 
-#if IPLUG_DSP // http://bit.ly/2S64BDd
 public:
   void ProcessBlock(sample** inputs, sample** outputs, int nFrames) override;
   void ProcessMidiMsg(const IMidiMsg& msg) override;
@@ -70,11 +69,13 @@ private:
   IMidiQueueBase<ISysEx> mSysExQueue;
   std::unique_ptr<uint8_t[]> wav_buffer; // NOTE: SAMPLES ARE int16_t stereo interleaved!
   int bufferMode;
+  int frequency = 2;
+  int polyphony = 4;
+  int reverb_effect = 0;
 
   uint8_t* load_rom_file(const char* romname);
   void lsgWrite(uint8_t* event, unsigned int length, int offset = 0);
   int start_synth(void);
   void stop_synth(void);
-
-#endif
+  char* handleDllPath(const char* romname);
 };
