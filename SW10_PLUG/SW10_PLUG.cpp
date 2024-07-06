@@ -1,6 +1,5 @@
 #include "SW10_PLUG.h"
 #include "IPlug_include_in_plug_src.h"
-#include "VLSG.h"
 #include <sstream>
 
 static const char* arg_rom = "ROMSXGM.BIN";
@@ -8,7 +7,7 @@ static const char* arg_rom = "ROMSXGM.BIN";
 static uint32_t outbuf_counter;
 
 static uint8_t* rom_address;
-static uint8_t wav_buffer[131072];  // NOTE: SAMPLES ARE int16_t stereo interleaved!
+//static uint8_t wav_buffer[131072];  // NOTE: SAMPLES ARE int16_t stereo interleaved!
 
 static unsigned int timediv;
 
@@ -75,49 +74,54 @@ static char* handleDllPath(const char* romname) {
 }
 
 // TODO move to C++ private function
-static uint8_t* load_rom_file(const char* romname)
+uint8_t* SW10_PLUG::load_rom_file(const char* romname)
 {
   FILE* f;
   uint8_t* mem;
 
+  // Open in same dir as DLL
   char* dirPath = handleDllPath(romname);
   f = fopen(dirPath, "rb");
-  if (f == NULL)
+  if (f == nullptr)
   {
-    return NULL;
+    //Fallback - open in current process CWD
+    if (f = fopen(romname, "rb"))
+      return nullptr;
   }
 
+  // Original ROM always 2MB. If using custom ROM, this may need to change.
   mem = (uint8_t*)malloc(2 * 1024 * 1024);
-  if (mem == NULL)
+  if (mem == nullptr)
   {
     fclose(f);
-    return NULL;
+    return nullptr;
   }
 
+  // If ROM read was not exactly 2MB, fail loading.
   if (fread(mem, 1, 2 * 1024 * 1024, f) != 2 * 1024 * 1024)
   {
     free(mem);
     fclose(f);
-    return NULL;
+    return nullptr;
   }
 
   return mem;
 }
 
-static void lsgWrite(uint8_t* event, unsigned int length, int offset = 0)
+void SW10_PLUG::lsgWrite(uint8_t* event, unsigned int length, int offset)
 {
   const uint32_t time = lsgGetTime();
   const uint8_t *p = reinterpret_cast<const BYTE*>(event);
 
   // Old method
   for (; length > 0; length--, p++) {
-    VLSG_Write(&time, 4);
-    VLSG_Write(p, 1);
+    vlsgInstance->VLSG_Write(&time, 4);
+    vlsgInstance->VLSG_Write(p, 1);
   }
-  ProcessMidiData();
+  vlsgInstance->ProcessMidiData();
 }
 
-static int start_synth(void)
+int SW10_PLUG::start_synth(void)
 {
   rom_address = load_rom_file(arg_rom);
   if (rom_address == NULL) {
@@ -126,42 +130,44 @@ static int start_synth(void)
   }
 
   // set function GetTime
-  VLSG_SetFunc_GetTime(lsgGetTime);
+  vlsgInstance->VLSG_SetFunc_GetTime(lsgGetTime);
 
   // set frequency
-  VLSG_SetParameter(PARAMETER_Frequency, frequency);
+  vlsgInstance->VLSG_SetParameter(PARAMETER_Frequency, frequency);
 
   // set polyphony
-  VLSG_SetParameter(PARAMETER_Polyphony, 0x10 + polyphony);
+  vlsgInstance->VLSG_SetParameter(PARAMETER_Polyphony, 0x10 + polyphony);
 
   // set reverb effect
-  VLSG_SetParameter(PARAMETER_Effect, 0x20 + reverb_effect);
+  vlsgInstance->VLSG_SetParameter(PARAMETER_Effect, 0x20 + reverb_effect);
 
   // set address of ROM file
-  VLSG_SetParameter(PARAMETER_ROMAddress, (uintptr_t)rom_address);
+  vlsgInstance->VLSG_SetParameter(PARAMETER_ROMAddress, (uintptr_t)rom_address);
 
   // set output buffer
   outbuf_counter = 0;
-  memset(wav_buffer, 0, 131072);
-  VLSG_SetParameter(PARAMETER_OutputBuffer, (uintptr_t)wav_buffer);
+  memset(wav_buffer.get(), 0, 131072);
+  vlsgInstance->VLSG_SetParameter(PARAMETER_OutputBuffer, (uintptr_t)wav_buffer.get());
 
   // start playback
-  VLSG_PlaybackStart();
+  vlsgInstance->VLSG_PlaybackStart();
 
   return 0;
 }
 
-static void stop_synth(void)
+void SW10_PLUG::stop_synth(void)
 {
-  VLSG_PlaybackStop();
+  vlsgInstance->VLSG_PlaybackStop();
   //munmap(rom_address, ROMSIZE); // TODO unload
 }
 
 
 
 SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
-: iplug::Plugin(info, MakeConfig(kNumParams, kNumPresets)),
-  bufferMode(1)
+  : iplug::Plugin(info, MakeConfig(kNumParams, kNumPresets)),
+  vlsgInstance(std::make_unique<VLSG>()),
+  bufferMode(1),
+  wav_buffer(std::make_unique<uint8_t[]>(262144)) // 256KB buffer, ok for 88200Hz?
 {
   start_synth();
 
@@ -249,25 +255,25 @@ void SW10_PLUG::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 
   if (bufferMode == 1) {
     // Attempt 1 - directly render as requested to output buffer (without respecting internal timer code)
-    VLSG_BufferVst(outbuf_counter, outputs, nFrames, mMidiQueue, mSysExQueue);
+    vlsgInstance->VLSG_BufferVst(outbuf_counter, outputs, nFrames, mMidiQueue, mSysExQueue);
     mMidiQueue.Flush(nFrames);
     mSysExQueue.Flush(nFrames);
   } else if (bufferMode == 2) {
     // Attempt 2 - render the chunks based on existing hard-coded sample sizes, but only dequeue on demand.
     if (renderedSampleQueueSize <= 0) {
-      VLSG_Buffer(outbuf_counter);
+      vlsgInstance->VLSG_Buffer(outbuf_counter);
       renderedSampleQueueSize += 1024;  //outbuf_size_para (uint8_t)
       ++outbuf_counter;
     }
 
     for (int sampleIdx = 0, frameIdx = 0; frameIdx < nFrames; ) {
       if (renderedSampleQueueSize <= 0) {
-        VLSG_Buffer(outbuf_counter);
+        vlsgInstance->VLSG_Buffer(outbuf_counter);
         renderedSampleQueueSize += 1024;
         ++outbuf_counter;
       }
-      outputs[0][frameIdx] = (((int16_t*)wav_buffer)[renderOffset++ & 32767]) / 32768.0;
-      outputs[1][frameIdx++] = (((int16_t*)wav_buffer)[renderOffset++ & 32767]) / 32768.0;
+      outputs[0][frameIdx] = (((int16_t*)wav_buffer.get())[renderOffset++ & 32767]) / 32768.0;
+      outputs[1][frameIdx++] = (((int16_t*)wav_buffer.get())[renderOffset++ & 32767]) / 32768.0;
       --renderedSampleQueueSize;
     }
   }
@@ -432,7 +438,7 @@ void SW10_PLUG::ProcessMidiMsg(const IMidiMsg& msg)
     break;
   }
   // Fuck it, process every single event.
-  ProcessMidiData();
+  vlsgInstance->ProcessMidiData();
 }
 
 void SW10_PLUG::OnParamChange(int paramIdx)
@@ -442,18 +448,18 @@ void SW10_PLUG::OnParamChange(int paramIdx)
   switch (paramIdx) {
     case kParamSampleRate:
       frequency = value;
-      VLSG_SetParameter(PARAMETER_Frequency, frequency);
+      vlsgInstance->VLSG_SetParameter(PARAMETER_Frequency, frequency);
       break;
     case kParamPolyphony:
       polyphony = value;
-      VLSG_SetParameter(PARAMETER_Polyphony, 0x10 + polyphony);
+      vlsgInstance->VLSG_SetParameter(PARAMETER_Polyphony, 0x10 + polyphony);
       break;
     case kParamBufferRenderMode:
       bufferMode = value;
       break;
     case kParamReverbMode:
       reverb_effect = value;
-      VLSG_SetParameter(PARAMETER_Effect, 0x20 + reverb_effect);
+      vlsgInstance->VLSG_SetParameter(PARAMETER_Effect, 0x20 + reverb_effect);
       break;
     case kParamPitchBendRange: {
       // Send 0-0-bendRange RPN event
@@ -475,7 +481,7 @@ void SW10_PLUG::OnParamChange(int paramIdx)
       break;
     }
     case kParamDecay:
-      VLSG_SetParameter(PARAMETER_VelocityFunc, 0x40 + value);
+      vlsgInstance->VLSG_SetParameter(PARAMETER_VelocityFunc, 0x40 + value);
       break;
   }
 }

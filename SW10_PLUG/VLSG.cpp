@@ -23,158 +23,9 @@
  *
  */
 
-#include <stddef.h>
-#include <string.h>
-#include <limits.h>
 #include "VLSG.h"
 
 
-#ifdef _MSC_VER
-#define inline __inline
-#include <intrin.h>
-#endif
-
-
-#define MIDI_CHANNELS 16
-#define DRUM_CHANNEL 9
-#define MAX_VOICES 128  // hehehhe
-
-
-typedef struct
-{
-    uint16_t program_change;
-    int16_t modulation;
-    int16_t channel_pressure;
-    int16_t expression;
-    int16_t volume;
-    int16_t pitch_bend;
-    int16_t pan;
-    uint16_t chflags;
-    int16_t pitch_bend_sense;
-    int16_t fine_tune;
-    int16_t coarse_tune;
-    uint8_t parameter_number_MSB;
-    uint8_t parameter_number_LSB;
-    uint8_t data_entry_MSB;
-    uint8_t data_entry_LSB;
-} Channel_Data;
-
-typedef struct
-{
-    uint32_t wv_fpos;
-    uint32_t wv_end;
-    uint32_t wv_start;
-    int32_t field_0C[4];
-    uint32_t wv_un3_hi;
-    uint32_t wv_pos;
-    uint32_t v_freq;
-    int32_t field_28;
-    int32_t field_2C;
-    int32_t field_30;
-    int32_t field_34;
-    int32_t field_38;
-    int32_t note_number;
-    int16_t note_velocity;
-    int16_t channel_num_2;
-    int16_t base_freq;
-    uint16_t vflags;
-    int16_t field_48;
-    int16_t field_4A;
-    int16_t field_4C;
-    uint16_t v_vol;
-    int16_t field_50;
-    int16_t field_52;
-    int16_t field_54;
-    int16_t detune;   // = pgm.detune
-    int16_t pgm_f0E;  // = pgm.field_0E
-    int16_t pgm_f10;  // = pgm.field_10
-    uint16_t index;   // = pgm.index
-    uint16_t pgm_f14; // = pgm.field_14
-    int16_t wv_un3_lo;
-    int16_t v_velocity;
-    int16_t vol;
-    int16_t wv_un1_lo;
-    int16_t wv_un1_hi;
-    int16_t v_panpot;
-} Voice_Data;
-
-typedef struct
-{
-  uint16_t field_00;
-  uint16_t field_02;
-  int16_t  detune;
-  int16_t  field_06;
-  int16_t  field_08;
-  int16_t  panpot;
-  int16_t  field_0C;
-  int16_t  field_0E;
-  int16_t  field_10;
-  uint16_t index;
-  uint16_t field_14;
-  int16_t  field_16;
-  int16_t  field_18;
-  int16_t  field_1A;
-} Program_Data;
-
-
-enum Voice_Flags
-{
-    VFLAG_Mask07    = 0x07,
-    VFLAG_NotMask07 = 0xF8,
-
-    VFLAG_Mask38    = 0x38,
-    VFLAG_NotMask38 = 0xC7,
-
-    VFLAG_Value40   = 0x40,
-    VFLAG_Value80   = 0x80,
-    VFLAG_MaskC0    = 0xC0,
-};
-
-enum Channel_Flags
-{
-    CHFLAG_Sostenuto  = 0x2000,
-    CHFLAG_Soft       = 0x4000,
-    CHFLAG_Sustain    = 0x8000,
-};
-
-
-static const char VLSG_Name[] = "CASIO SW-10";
-static VLSG_GETTIME get_time_func;
-
-static uint32_t dword_C0000000;
-static uint32_t dword_C0000004;
-static uint32_t dword_C0000008;
-static int32_t output_size_para;
-static uint32_t system_time_2;
-static uint8_t event_data[256];
-static uint32_t recent_voice_index;
-static Program_Data *program_data_ptr;
-static Channel_Data *channel_data_ptr;
-static uint32_t event_type;
-static int32_t event_length = 0;
-static int32_t reverb_data_buffer[32768];
-static uint32_t reverb_data_index;
-static int32_t is_reverb_enabled;
-static uint32_t reverb_shift;
-static volatile uint32_t midi_data_read_index;
-static uint8_t midi_data_buffer[65536];
-static volatile uint32_t midi_data_write_index;
-static uint32_t processing_phase;
-static uint32_t rom_offset;
-static Program_Data program_data[MIDI_CHANNELS * 2];
-static Channel_Data channel_data[MIDI_CHANNELS];
-static Voice_Data voice_data[MAX_VOICES];
-static uint32_t velocity_func;
-static int32_t current_polyphony;
-static const uint8_t *romsxgm_ptr;
-static uint32_t output_frequency;
-static int32_t maximum_polyphony_new_value;
-static uint32_t system_time_1;
-static int32_t maximum_polyphony;
-static uint8_t *output_data_ptr;
-static uint32_t output_buffer_size_samples;
-static uint32_t output_buffer_size_bytes;
-static uint32_t effect_param_value;
 
 static const uint32_t dword_C0032188[112+104+40] =
 {
@@ -213,6 +64,7 @@ static const uint32_t dword_C0032188[112+104+40] =
     32768, 34716, 36780, 38967, 41285, 43740, 46340, 49096,
     52015, 55108, 58385, 61857, 65536, 69432, 73561, 77935
 };
+
 static const uint32_t dword_C0032588[256] =
 {
     32768, 32775, 32782, 32790, 32797, 32804, 32812, 32819,
@@ -268,6 +120,7 @@ static const int32_t drum_exc_map[38+34+1] =
 // zero terminator
     0
 };
+
 static const int32_t velocity_curves[12][128] =
 {
     {
@@ -398,80 +251,36 @@ static const int32_t dword_C00342C0[4] = { 0, 1, 2, -1 };
 static const uint16_t word_C00342D0[17] = { 0, 250, 561, 949, 1430, 2030, 2776, 3704, 4858, 6295, 8083, 10307, 13075, 16519, 20803, 26135, 32768 };
 
 
-VLSG_API_(uint32_t) VLSG_GetVersion(void)
+static inline uint16_t READ_LE_UINT16(const uint8_t* ptr)
+{
+  return ptr[0] | (ptr[1] << 8);
+}
+
+
+uint32_t VLSG::VLSG_GetVersion(void)
 {
     return 0x103;
 }
 
-VLSG_API_(const char*) VLSG_GetName(void)
+const char* VLSG::VLSG_GetName(void) const
 {
+    static const char VLSG_Name[] = "CASIO SW-10";
     return VLSG_Name;
 }
 
-VLSG_API_(uint32_t) VLSG_GetTime(void)
+uint32_t VLSG::VLSG_GetTime(void)
 {
   if (get_time_func != NULL)
     return get_time_func();
   return 0;
 }
 
-VLSG_API_(void) VLSG_SetFunc_GetTime(VLSG_GETTIME get_time)
+void VLSG::VLSG_SetFunc_GetTime(uint32_t (*get_time)())
 {
     get_time_func = get_time;
 }
 
-// Private functions
-static int32_t InitializeVelocityFunc(void);
-static int32_t EMPTY_DeinitializeVelocityFunc(void);
-static int32_t InitializeVariables(void);
-static int32_t EMPTY_DeinitializeVariables(void);
-static void CountActiveVoices(void);
-static void SetMaximumVoices(int maximum_voices);
-//static void ProcessMidiData(void);
-static Voice_Data *FindAvailableVoice(int32_t channel_num_2, int32_t note_number);
-static Voice_Data *FindVoice(int32_t channel_num_2, int32_t note_number);
-static void NoteOff(void);
-static void NoteOn(int32_t ch);
-static void ControlChange(void);
-static void SystemExclusive(void);
-static int32_t InitializeReverbBuffer(void);
-static int32_t DeinitializeReverbBuffer(void);
-static void EnableReverb(void);
-static void DisableReverb(void);
-static void SetReverbShift(uint32_t shift);
-static void DefragmentVoices(void);
-static void GenerateOutputData(uint8_t *output_ptr, uint32_t offset1, uint32_t offset2);
-static void GenerateOutputDataVst(double** output_ptr, uint32_t offset1, uint32_t offset2); // invasive workaround
-static int32_t InitializeMidiDataBuffer(void);
-static int32_t EMPTY_DeinitializeMidiDataBuffer(void);
-static void AddByteToMidiDataBuffer(uint8_t value);
-static uint8_t GetValueFromMidiDataBuffer(void);
-static int32_t InitializePhase(void);
-static int32_t EMPTY_DeinitializePhase(void);
-static void voice_set_panpot(Voice_Data *voice_data_ptr);
-static void voice_set_flags(Voice_Data *voice_data_ptr);
-static void voice_set_flags2(Voice_Data *voice_data_ptr);
-static void voice_set_amp(Voice_Data *voice_data_ptr);
-//static void ProcessPhase(void);
-static int32_t sub_C0036FB0(int16_t value3);
-static void sub_C0036FE0(void);
-static void sub_C0037140(void);
-static int32_t InitializeStructures(void);
-static int32_t EMPTY_DeinitializeStructures(void);
-static void ResetAllControllers(Channel_Data *channel_data_ptr);
-static void ResetChannel(Channel_Data *channel_data_ptr);
-static uint32_t rom_change_bank(uint32_t bank, int32_t index);
-static uint16_t rom_read_word(void);
-static int16_t rom_read_word_at(uint32_t offset);
-
-
-static inline uint16_t READ_LE_UINT16(const uint8_t *ptr)
-{
-    return ptr[0] | (ptr[1] << 8);
-}
-
-
-VLSG_API_(VLSG_Bool) VLSG_SetParameter(uint32_t type, uintptr_t value)
+VLSG_Bool VLSG::VLSG_SetParameter(uint32_t type, uintptr_t value)
 {
     switch (type)
     {
@@ -531,43 +340,51 @@ VLSG_API_(VLSG_Bool) VLSG_SetParameter(uint32_t type, uintptr_t value)
     }
 }
 
-VLSG_API_(VLSG_Bool) VLSG_SetWaveBuffer(void* ptr)
+VLSG_Bool VLSG::VLSG_SetWaveBuffer(void* ptr)
 {
     output_data_ptr = (uint8_t*)ptr;
     return VLSG_TRUE;
 }
 
-VLSG_API_(VLSG_Bool) VLSG_SetRomAddress(const void* ptr)
+VLSG_Bool VLSG::VLSG_SetRomAddress(const void* ptr)
 {
     romsxgm_ptr = (const uint8_t*)ptr;
     return VLSG_TRUE;
 }
 
-VLSG_API_(VLSG_Bool) VLSG_SetFrequency(unsigned int frequency)
+VLSG_Bool VLSG::VLSG_SetFrequency(unsigned int frequency)
 {
-    uint32_t buffer_size;
+    const double base_freq = 11025.0;
+    const int base_para = 64;
+    const int base_buf = 4096;
+    double freq_ratio = frequency / base_freq;
 
-    if (frequency == 11025) {
-        output_frequency = 11025;
-        output_size_para = 64;
-        buffer_size = 4096;
-    } else if (frequency == 44100) {
-        output_frequency = 44100;
-        output_size_para = 256;
-        buffer_size = 16384;
-    } else if (frequency == 22050) {
-        output_frequency = 22050;
-        output_size_para = 128;
-        buffer_size = 8192;
-    } else if (frequency == 16538) {
-        output_frequency = 16538;
-        output_size_para = 96;
-        buffer_size = 8000;
-    } else if (frequency == 48000) {
-        output_frequency = 48000;
-        output_size_para = 384;
-        buffer_size = 16384;
-    } else {
+    output_frequency = frequency;
+    output_size_para = base_para * freq_ratio;
+    uint32_t buffer_size = base_buf * freq_ratio;
+    
+    //if (frequency == 11025) {
+    //    output_frequency = 11025;
+    //    output_size_para = 64;
+    //    buffer_size = 4096;
+    //} else if (frequency == 44100) {
+    //    output_frequency = 44100;
+    //    output_size_para = 256;
+    //    buffer_size = 16384;
+    //} else if (frequency == 22050) {
+    //    output_frequency = 22050;
+    //    output_size_para = 128;
+    //    buffer_size = 8192;
+    //} else if (frequency == 16538) {
+    //    output_frequency = 16538;
+    //    output_size_para = 96;
+    //    buffer_size = 8000;
+    //} else if (frequency == 48000) {
+    //    output_frequency = 48000;
+    //    output_size_para = 384;
+    //    buffer_size = 16384;
+    //} else {
+    if (frequency < 8000 || frequency > 88200) { // TODO need to scale fixed buffer size
         return VLSG_FALSE;
     }
 
@@ -577,22 +394,21 @@ VLSG_API_(VLSG_Bool) VLSG_SetFrequency(unsigned int frequency)
     return VLSG_TRUE;
 }
 
-VLSG_API_(VLSG_Bool) VLSG_SetPolyphony(unsigned int poly)
+VLSG_Bool VLSG::VLSG_SetPolyphony(unsigned int poly)
 {
     int32_t polyphony;
 
-    if (poly == 24 || poly == 32 || poly == 48 || poly == 64 || poly == 128) {
-        polyphony = (int32_t)poly;
-    } else {
+    //if (poly == 24 || poly == 32 || poly == 48 || poly == 64 || poly == 128) {
+    if (poly < 1 || poly > MAX_VOICES) {
         return VLSG_FALSE;
     }
-
+    polyphony = (int32_t)poly;
     maximum_polyphony = polyphony;
     maximum_polyphony_new_value = polyphony;
     return VLSG_TRUE;
 }
 
-VLSG_API_(VLSG_Bool) VLSG_SetEffect(unsigned int effect)
+VLSG_Bool VLSG::VLSG_SetEffect(unsigned int effect)
 {
     if (effect > 2) {
         return VLSG_FALSE;
@@ -614,7 +430,7 @@ VLSG_API_(VLSG_Bool) VLSG_SetEffect(unsigned int effect)
     return VLSG_TRUE;
 }
 
-VLSG_API_(VLSG_Bool) VLSG_SetVelocityFunc(unsigned int curveIdx)
+VLSG_Bool VLSG::VLSG_SetVelocityFunc(unsigned int curveIdx)
 {
     if (curveIdx < 0 || curveIdx >= 11)
       curveIdx = 6;
@@ -623,7 +439,7 @@ VLSG_API_(VLSG_Bool) VLSG_SetVelocityFunc(unsigned int curveIdx)
     return VLSG_TRUE;
 }
 
-VLSG_API_(VLSG_Bool) VLSG_Init(void)
+VLSG_Bool VLSG::VLSG_Init(void)
 {
     current_polyphony = 0;
     dword_C0000000 = 0;
@@ -677,7 +493,7 @@ VLSG_API_(VLSG_Bool) VLSG_Init(void)
     return VLSG_TRUE;
 }
 
-VLSG_API_(VLSG_Bool) VLSG_Exit(void)
+VLSG_Bool VLSG::VLSG_Exit(void)
 {
     current_polyphony = 0;
 
@@ -689,7 +505,7 @@ VLSG_API_(VLSG_Bool) VLSG_Exit(void)
     return EMPTY_DeinitializeVelocityFunc();
 }
 
-VLSG_API_(void) VLSG_Write(const void* data, uint32_t len)
+void VLSG::VLSG_Write(const void* data, uint32_t len)
 {
     const uint8_t* ptr = (const uint8_t*)(data);
     for (; len != 0; len--)
@@ -698,7 +514,7 @@ VLSG_API_(void) VLSG_Write(const void* data, uint32_t len)
     }
 }
 
-VLSG_API_(int32_t) VLSG_Buffer(uint32_t output_buffer_counter)
+int32_t VLSG::VLSG_Buffer(uint32_t output_buffer_counter)
 {
     uint32_t time1, value1, time2, time3, offset1;
     int counter;
@@ -784,7 +600,7 @@ VLSG_API_(int32_t) VLSG_Buffer(uint32_t output_buffer_counter)
 }
 
 // Seriously CBF that hardcoded buffer BS so writing the output directly on demand.
-VLSG_API_(int32_t) VLSG_BufferVst(uint32_t output_buffer_counter, double** output, int nFrames, iplug::IMidiQueue& mMidiQueue, iplug::IMidiQueueBase<iplug::ISysEx>& mSysExQueue)
+int32_t VLSG::VLSG_BufferVst(uint32_t output_buffer_counter, double** output, int nFrames, iplug::IMidiQueue& mMidiQueue, iplug::IMidiQueueBase<iplug::ISysEx>& mSysExQueue)
 {
   /*if (output_buffer_counter == 0) {
     system_time_1 = VLSG_GetTime();
@@ -841,38 +657,38 @@ VLSG_API_(int32_t) VLSG_BufferVst(uint32_t output_buffer_counter, double** outpu
 }
 
 
-int32_t VLSG_PlaybackStart(void)
+int32_t VLSG::VLSG_PlaybackStart(void)
 {
   return (int32_t)VLSG_Init();
 }
 
-int32_t VLSG_PlaybackStop(void)
+int32_t VLSG::VLSG_PlaybackStop(void)
 {
   return (int32_t)VLSG_Exit();
 }
 
-void VLSG_AddMidiData(uint8_t *ptr, uint32_t len)
+void VLSG::VLSG_AddMidiData(uint8_t *ptr, uint32_t len)
 {
   VLSG_Write(ptr, len);
 }
 
-int32_t VLSG_FillOutputBuffer(uint32_t output_buffer_counter)
+int32_t VLSG::VLSG_FillOutputBuffer(uint32_t output_buffer_counter)
 {
   return VLSG_Buffer(output_buffer_counter);
 }
 
-static int32_t InitializeVelocityFunc(void)
+int32_t VLSG::InitializeVelocityFunc(void)
 {
     velocity_func = 6;
     return 0;
 }
 
-static int32_t EMPTY_DeinitializeVelocityFunc(void)
+int32_t VLSG::EMPTY_DeinitializeVelocityFunc(void)
 {
     return 0;
 }
 
-static void voice_set_freq(Voice_Data *voice_data_ptr, int32_t pitch)
+void VLSG::voice_set_freq(Voice_Data *voice_data_ptr, int32_t pitch)
 {
     Channel_Data *channel_ptr;
     int32_t value1;
@@ -903,7 +719,7 @@ static void voice_set_freq(Voice_Data *voice_data_ptr, int32_t pitch)
     }
 }
 
-static int32_t voice_get_index(Voice_Data *voice_data_ptr, int32_t pitch)
+int32_t VLSG::voice_get_index(Voice_Data *voice_data_ptr, int32_t pitch)
 {
     uint32_t offset1;
     int32_t channel_num_2;
@@ -932,7 +748,7 @@ static int32_t voice_get_index(Voice_Data *voice_data_ptr, int32_t pitch)
     return rom_read_word_at(offset1 + 2 * note_number);
 }
 
-static void ProgramChange(Program_Data *program_data_ptr, uint32_t program_number)
+void VLSG::ProgramChange(Program_Data *program_data_ptr, uint32_t program_number)
 {
     int16_t *data;
     int counter, index;
@@ -966,7 +782,7 @@ static void ProgramChange(Program_Data *program_data_ptr, uint32_t program_numbe
     }
 }
 
-static void VoiceSoundOff(Voice_Data *voice_data_ptr)
+void VLSG::VoiceSoundOff(Voice_Data *voice_data_ptr)
 {
     voice_data_ptr->field_50 = 0x7FFF;
     voice_data_ptr->vflags &= ~VFLAG_Value40;
@@ -976,7 +792,7 @@ static void VoiceSoundOff(Voice_Data *voice_data_ptr)
     voice_set_flags(voice_data_ptr);
 }
 
-static void VoiceNoteOff(Voice_Data *voice_data_ptr)
+void VLSG::VoiceNoteOff(Voice_Data *voice_data_ptr)
 {
     voice_data_ptr->vflags |= VFLAG_Value80;
 
@@ -988,7 +804,7 @@ static void VoiceNoteOff(Voice_Data *voice_data_ptr)
     }
 }
 
-static void AllChannelNotesOff(int32_t channel_num)
+void VLSG::AllChannelNotesOff(int32_t channel_num)
 {
     int index;
 
@@ -1001,7 +817,7 @@ static void AllChannelNotesOff(int32_t channel_num)
     }
 }
 
-static void AllChannelSoundsOff(int32_t channel_num)
+void VLSG::AllChannelSoundsOff(int32_t channel_num)
 {
     int index;
 
@@ -1014,7 +830,7 @@ static void AllChannelSoundsOff(int32_t channel_num)
     }
 }
 
-static void ControllerSettingsOn(int32_t channel_num)
+void VLSG::ControllerSettingsOn(int32_t channel_num)
 {
     int index;
 
@@ -1033,7 +849,7 @@ static void ControllerSettingsOn(int32_t channel_num)
     }
 }
 
-static void ControllerSettingsOff(int32_t channel_num)
+void VLSG::ControllerSettingsOff(int32_t channel_num)
 {
     int index;
 
@@ -1056,7 +872,7 @@ static void ControllerSettingsOff(int32_t channel_num)
     }
 }
 
-static void StartPlayingVoice(Voice_Data *voice_data_ptr, Channel_Data *channel_data_ptr, Program_Data *program_data_ptr)
+void VLSG::StartPlayingVoice(Voice_Data *voice_data_ptr, Channel_Data *channel_data_ptr, Program_Data *program_data_ptr)
 {
     uint16_t value0;
     uint32_t value1;
@@ -1249,7 +1065,7 @@ static void StartPlayingVoice(Voice_Data *voice_data_ptr, Channel_Data *channel_
     }
 }
 
-static void AllVoicesSoundsOff(void)
+void VLSG::AllVoicesSoundsOff(void)
 {
     int index;
 
@@ -1262,7 +1078,7 @@ static void AllVoicesSoundsOff(void)
     }
 }
 
-static int32_t InitializeVariables(void)
+int32_t VLSG::InitializeVariables(void)
 {
     recent_voice_index = 0;
     event_length = 0;
@@ -1270,12 +1086,12 @@ static int32_t InitializeVariables(void)
     return 0;
 }
 
-static int32_t EMPTY_DeinitializeVariables(void)
+int32_t VLSG::EMPTY_DeinitializeVariables(void)
 {
     return 0;
 }
 
-static void CountActiveVoices(void)
+void VLSG::CountActiveVoices(void)
 {
     int active_voices, index;
 
@@ -1290,7 +1106,7 @@ static void CountActiveVoices(void)
     current_polyphony = active_voices;
 }
 
-static void ReduceActiveVoices(int32_t maximum_voices)
+void VLSG::ReduceActiveVoices(int32_t maximum_voices)
 {
     int index1, index2, index3;
     int active_voices;
@@ -1375,7 +1191,7 @@ static void ReduceActiveVoices(int32_t maximum_voices)
     }
 }
 
-static void SetMaximumVoices(int maximum_voices)
+void VLSG::SetMaximumVoices(int maximum_voices)
 {
     int index;
 
@@ -1393,7 +1209,7 @@ static void SetMaximumVoices(int maximum_voices)
     recent_voice_index = 0;
 }
 
-VLSG_API_(void) ProcessMidiData(void)
+void VLSG::ProcessMidiData(void)
 {
     uint8_t midi_value;
 
@@ -1499,7 +1315,7 @@ VLSG_API_(void) ProcessMidiData(void)
     system_time_1 = VLSG_GetTime();
 }
 
-static uint8_t* parseMidiMsg(iplug::IMidiMsg& msg)
+uint8_t* VLSG::parseMidiMsg(iplug::IMidiMsg& msg)
 {
   iplug::IMidiMsg::EStatusMsg status = msg.StatusMsg();
 
@@ -1614,7 +1430,7 @@ static uint8_t* parseMidiMsg(iplug::IMidiMsg& msg)
   return data;
 }
 
-VLSG_API_(void) ProcessSysExDataVst(iplug::ISysEx& msg)
+void VLSG::ProcessSysExDataVst(iplug::ISysEx& msg)
 {
   uint8_t* sysex_value_ptr = (uint8_t*)msg.mData;
   uint32_t count = 0;
@@ -1674,7 +1490,7 @@ VLSG_API_(void) ProcessSysExDataVst(iplug::ISysEx& msg)
   system_time_1 = VLSG_GetTime();
 }
 
-VLSG_API_(void) ProcessMidiDataVst(iplug::IMidiMsg& msg)
+void VLSG::ProcessMidiDataVst(iplug::IMidiMsg& msg)
 {
   uint8_t *midi_value_ptr = parseMidiMsg(msg);
 
@@ -1778,7 +1594,7 @@ VLSG_API_(void) ProcessMidiDataVst(iplug::IMidiMsg& msg)
   system_time_1 = VLSG_GetTime();
 }
 
-static Voice_Data *FindAvailableVoice(int32_t channel_num_2, int32_t note_number)
+Voice_Data* VLSG::FindAvailableVoice(int32_t channel_num_2, int32_t note_number)
 {
     int index1, index2, index3, index4;
 
@@ -1833,7 +1649,7 @@ static Voice_Data *FindAvailableVoice(int32_t channel_num_2, int32_t note_number
     return &(voice_data[index1]);
 }
 
-static Voice_Data *FindVoice(int32_t channel_num_2, int32_t note_number)
+Voice_Data* VLSG::FindVoice(int32_t channel_num_2, int32_t note_number)
 {
     int index;
 
@@ -1858,7 +1674,7 @@ static Voice_Data *FindVoice(int32_t channel_num_2, int32_t note_number)
     return NULL;
 }
 
-static void NoteOff(void)
+void VLSG::NoteOff(void)
 {
     Voice_Data *voice;
 
@@ -1881,7 +1697,7 @@ static void NoteOff(void)
     }
 }
 
-static void NoteOn(int32_t part)
+void VLSG::NoteOn(int32_t part)
 {
     Voice_Data *voice;
 
@@ -1897,7 +1713,7 @@ static void NoteOn(int32_t part)
     StartPlayingVoice(voice, channel_data_ptr, &program_data_ptr[part]);
 }
 
-static void ControlChange(void)
+void VLSG::ControlChange(void)
 {
     switch (event_data[1])
     {
@@ -1910,10 +1726,10 @@ static void ControlChange(void)
             {
                 if (channel_data_ptr->parameter_number_LSB == 0) // Pitch bend range
                 {
-                    // F YOUR GM2 PITCH LIMITS
-                    /*if (channel_data_ptr->data_entry_MSB <= 24)
-                    {*/
-                        channel_data_ptr->pitch_bend_sense = 2 * ((channel_data_ptr->data_entry_MSB << 7) + channel_data_ptr->data_entry_LSB);
+                    // F*** GENERAL MIDI PITCH LIMITS
+                    //if (channel_data_ptr->data_entry_MSB <= 24)
+                    //{
+                    channel_data_ptr->pitch_bend_sense = 2 * ((channel_data_ptr->data_entry_MSB << 7) + channel_data_ptr->data_entry_LSB);
                     //}
                 }
                 else if (channel_data_ptr->parameter_number_LSB == 1) // Fine tuning
@@ -1922,10 +1738,11 @@ static void ControlChange(void)
                 }
                 else if (channel_data_ptr->parameter_number_LSB == 2) // Coarse tuning
                 {
-                    if (channel_data_ptr->data_entry_MSB >= 40 && channel_data_ptr->data_entry_MSB <= 88)
-                    {
-                        channel_data_ptr->coarse_tune = channel_data_ptr->data_entry_MSB - 64;
-                    }
+                    // F*** GENERAL MIDI PITCH LIMITS
+                    //if (channel_data_ptr->data_entry_MSB >= 40 && channel_data_ptr->data_entry_MSB <= 88)
+                    //{
+                    channel_data_ptr->coarse_tune = channel_data_ptr->data_entry_MSB - 64;
+                    //}
                 }
             }
             break;
@@ -2023,7 +1840,7 @@ static void ControlChange(void)
     }
 }
 
-static void SystemExclusive(void)
+void VLSG::SystemExclusive(void)
 {
     int index;
 
@@ -2068,13 +1885,19 @@ static void SystemExclusive(void)
                 return;
 
             case 0x13:
-                maximum_polyphony = 64;
+                SetMaximumVoices(64);
                 maximum_polyphony_new_value = 64;
                 return;
 
+            // Unofficial, experimental below
             case 0x14:
-                maximum_polyphony = 128;
+                SetMaximumVoices(128);
                 maximum_polyphony_new_value = 128;
+                return;
+
+            case 0x15:
+                SetMaximumVoices(256);
+                maximum_polyphony_new_value = 256;
                 return;
 
             default:
@@ -2153,25 +1976,25 @@ static void SystemExclusive(void)
     }
 }
 
-static int32_t InitializeReverbBuffer(void)
+int32_t VLSG::InitializeReverbBuffer(void)
 {
     reverb_data_ptr = reverb_data_buffer;
     reverb_data_index = 0;
     return 0;
 }
 
-static int32_t DeinitializeReverbBuffer(void)
+int32_t VLSG::DeinitializeReverbBuffer(void)
 {
     reverb_data_ptr = NULL;
     return 0;
 }
 
-static void EnableReverb(void)
+void VLSG::EnableReverb(void)
 {
     is_reverb_enabled = 1;
 }
 
-static void DisableReverb(void)
+void VLSG::DisableReverb(void)
 {
     is_reverb_enabled = 0;
 #ifdef _MSC_VER
@@ -2181,12 +2004,12 @@ static void DisableReverb(void)
 #endif
 }
 
-static void SetReverbShift(uint32_t shift)
+void VLSG::SetReverbShift(uint32_t shift)
 {
     reverb_shift = shift;
 }
 
-static void DefragmentVoices(void)
+void VLSG::DefragmentVoices(void)
 {
     int index1, index2;
 
@@ -2210,7 +2033,7 @@ static void DefragmentVoices(void)
     }
 }
 
-static void GenerateOutputDataVst(double **output_ptr, uint32_t offset1, uint32_t offset2)
+void VLSG::GenerateOutputDataVst(double **output_ptr, uint32_t offset1, uint32_t offset2)
 {
   int index1, max_active_index;
   unsigned int index2;
@@ -2398,7 +2221,7 @@ static void GenerateOutputDataVst(double **output_ptr, uint32_t offset1, uint32_
   }
 }
 
-static void GenerateOutputData(uint8_t *output_ptr, uint32_t offset1, uint32_t offset2)
+void VLSG::GenerateOutputData(uint8_t *output_ptr, uint32_t offset1, uint32_t offset2)
 {
     int index1, max_active_index;
     unsigned int index2;
@@ -2577,19 +2400,19 @@ static void GenerateOutputData(uint8_t *output_ptr, uint32_t offset1, uint32_t o
     }
 }
 
-static int32_t InitializeMidiDataBuffer(void)
+int32_t VLSG::InitializeMidiDataBuffer(void)
 {
     midi_data_write_index = 0;
     midi_data_read_index = 0;
     return 0;
 }
 
-static int32_t EMPTY_DeinitializeMidiDataBuffer(void)
+int32_t VLSG::EMPTY_DeinitializeMidiDataBuffer(void)
 {
     return 0;
 }
 
-static void AddByteToMidiDataBuffer(uint8_t value)
+void VLSG::AddByteToMidiDataBuffer(uint8_t value)
 {
     uint32_t write_index;
 
@@ -2598,7 +2421,7 @@ static void AddByteToMidiDataBuffer(uint8_t value)
     midi_data_write_index = (write_index + 1) & 0xFFFF;
 }
 
-static uint8_t GetValueFromMidiDataBuffer(void)
+uint8_t VLSG::GetValueFromMidiDataBuffer(void)
 {
     uint32_t write_index, read_index;
     int index;
@@ -2646,24 +2469,24 @@ static uint8_t GetValueFromMidiDataBuffer(void)
     return result;
 }
 
-static int32_t InitializePhase(void)
+int32_t VLSG::InitializePhase(void)
 {
     processing_phase = 0;
     return 0;
 }
 
-static int32_t EMPTY_DeinitializePhase(void)
+int32_t VLSG::EMPTY_DeinitializePhase(void)
 {
     return 0;
 }
 
-static void voice_set_panpot(Voice_Data *voice_data_ptr)
+void VLSG::voice_set_panpot(Voice_Data *voice_data_ptr)
 {
     voice_data_ptr->field_34 = sub_C0036FB0(voice_data_ptr->v_panpot >> 8);
     voice_data_ptr->field_30 = sub_C0036FB0(voice_data_ptr->v_panpot & 0x1F);
 }
 
-static void voice_set_flags(Voice_Data *voice_data_ptr)
+void VLSG::voice_set_flags(Voice_Data *voice_data_ptr)
 {
     uint32_t offset1;
 
@@ -2680,7 +2503,7 @@ static void voice_set_flags(Voice_Data *voice_data_ptr)
     voice_data_ptr->vflags = (voice_data_ptr->vflags & VFLAG_NotMask07) | (voice_data_ptr->field_48 & 7);
 }
 
-static void voice_set_flags2(Voice_Data *voice_data_ptr)
+void VLSG::voice_set_flags2(Voice_Data *voice_data_ptr)
 {
     uint32_t offset1;
     uint16_t value1;
@@ -2735,7 +2558,7 @@ static void voice_set_flags2(Voice_Data *voice_data_ptr)
     voice_data_ptr->field_50 = value3;
 }
 
-static void voice_set_amp(Voice_Data *voice_data_ptr)
+void VLSG::voice_set_amp(Voice_Data *voice_data_ptr)
 {
     int32_t value0;
 
@@ -2748,7 +2571,7 @@ static void voice_set_amp(Voice_Data *voice_data_ptr)
 
 // Note: phase processing has to do with envelope states over time. do not over-process or the
 //       states will happen either too quickly or too slowly.
-VLSG_API_(void) ProcessPhase(void)
+void VLSG::ProcessPhase(void)
 {
     int phase, index, value;
     Channel_Data *channel;
@@ -2854,7 +2677,7 @@ VLSG_API_(void) ProcessPhase(void)
     }
 }
 
-static int32_t sub_C0036FB0(int16_t value3)
+int32_t VLSG::sub_C0036FB0(int16_t value3)
 {
     int32_t value1, value2;
 
@@ -2872,7 +2695,7 @@ static int32_t sub_C0036FB0(int16_t value3)
     return value1;
 }
 
-static void sub_C0036FE0(void) // ADSR envelope-related
+void VLSG::sub_C0036FE0(void) // ADSR envelope-related
 {
     int index;
     int32_t value1, value2, value3;
@@ -2918,7 +2741,7 @@ static void sub_C0036FE0(void) // ADSR envelope-related
     }
 }
 
-static void sub_C0037140(void)  // ADSR envelope-related
+void VLSG::sub_C0037140(void)  // ADSR envelope-related
 {
     int index, choice, index2;
     int32_t value1, value2, value3;
@@ -2970,7 +2793,7 @@ static void sub_C0037140(void)  // ADSR envelope-related
     }
 }
 
-static int32_t InitializeStructures(void)
+int32_t VLSG::InitializeStructures(void)
 {
     int index;
 
@@ -3006,12 +2829,12 @@ static int32_t InitializeStructures(void)
     return 0;
 }
 
-static int32_t EMPTY_DeinitializeStructures(void)
+int32_t VLSG::EMPTY_DeinitializeStructures(void)
 {
     return 0;
 }
 
-static void ResetAllControllers(Channel_Data *channel_data_ptr)
+void VLSG::ResetAllControllers(Channel_Data *channel_data_ptr)
 {
     channel_data_ptr->expression = 127;
     channel_data_ptr->pitch_bend = 0;
@@ -3024,7 +2847,7 @@ static void ResetAllControllers(Channel_Data *channel_data_ptr)
     channel_data_ptr->chflags &= ~CHFLAG_Sustain;
 }
 
-static void ResetChannel(Channel_Data *channel_data_ptr)
+void VLSG::ResetChannel(Channel_Data *channel_data_ptr)
 {
     channel_data_ptr->volume = 100;
     channel_data_ptr->program_change = 0;
@@ -3035,7 +2858,7 @@ static void ResetChannel(Channel_Data *channel_data_ptr)
     channel_data_ptr->channel_pressure = 0;
     channel_data_ptr->modulation = 0;
     channel_data_ptr->parameter_number_LSB = 255;
-    channel_data_ptr->pan = 0;
+    channel_data_ptr->pan = 64; // 0;
     channel_data_ptr->parameter_number_MSB = 255;
     channel_data_ptr->fine_tune = 0;
     channel_data_ptr->data_entry_MSB = 0;
@@ -3043,7 +2866,7 @@ static void ResetChannel(Channel_Data *channel_data_ptr)
     channel_data_ptr->data_entry_LSB = 0;
 }
 
-static uint32_t rom_change_bank(uint32_t bank, int32_t index)
+uint32_t VLSG::rom_change_bank(uint32_t bank, int32_t index)
 {
     const uint8_t *address1;
     uint32_t offset1;
@@ -3057,7 +2880,7 @@ static uint32_t rom_change_bank(uint32_t bank, int32_t index)
     return rom_offset;
 }
 
-static uint16_t rom_read_word(void)
+uint16_t VLSG::rom_read_word(void)
 {
     uint16_t result;
 
@@ -3066,19 +2889,19 @@ static uint16_t rom_read_word(void)
     return result;
 }
 
-static int16_t rom_read_word_at(uint32_t offset)
+int16_t VLSG::rom_read_word_at(uint32_t offset)
 {
     rom_offset = offset + 2;
     return (int16_t)READ_LE_UINT16(romsxgm_ptr + offset);
 }
 
-#if defined(VLSG_BUILD_DLL)
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-
-BOOL WINAPI DllEntryPoint(HINSTANCE hinst, DWORD reason, void* context)
-{
-    return TRUE;
-}
-#endif
+//#if defined(VLSG_BUILD_DLL)
+//#define WIN32_LEAN_AND_MEAN
+//#include <windows.h>
+//
+//BOOL WINAPI DllEntryPoint(HINSTANCE hinst, DWORD reason, void* context)
+//{
+//    return TRUE;
+//}
+//#endif
 

@@ -2,6 +2,7 @@
 
 #include "IPlug_include_in_plug_hdr.h"
 #include "IControls.h"
+#include "VLSG.h"
 
 const int kNumPresets = 1;
 
@@ -63,9 +64,17 @@ public:
   bool OnMessage(int msgTag, int ctrlTag, int dataSize, const void* pData) override;
 
 private:
+  std::unique_ptr<VLSG> vlsgInstance;
   IPeakAvgSender<2> mMeterSender;
   IMidiQueue mMidiQueue;
   IMidiQueueBase<ISysEx> mSysExQueue;
+  std::unique_ptr<uint8_t[]> wav_buffer; // NOTE: SAMPLES ARE int16_t stereo interleaved!
   int bufferMode;
+
+  uint8_t* load_rom_file(const char* romname);
+  void lsgWrite(uint8_t* event, unsigned int length, int offset = 0);
+  int start_synth(void);
+  void stop_synth(void);
+
 #endif
 };
