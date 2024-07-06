@@ -32,18 +32,19 @@ SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
   start_synth();
 
   // TODO remap params
-  GetParam(kParamSampleRate)->InitEnum("SampleRate", 2., { "11025", "22050", "44100", "16538", "48000" });
-  GetParam(kParamPolyphony)->InitEnum("Polyphony", 4., {"24", "32", "48", "64", "128", "256"});
-  GetParam(kParamReverbMode)->InitEnum("Reverb Mode", 0., { "Off", "Reverb 1", "Reverb 2" });
+  GetParam(kParamSampleRate)->InitEnum("SampleRate", frequency, { "11025", "22050", "44100", "16538", "48000" });
+  GetParam(kParamPolyphony)->InitEnum("Polyphony", polyphony, {"24", "32", "48", "64", "128", "256"});
+  GetParam(kParamReverbMode)->InitEnum("Reverb Mode", reverb_effect, { "Off", "Reverb 1", "Reverb 2" });
   GetParam(kParamPitchBendRange)->InitInt("P.Bend Rng", 2, 0, 127, "semitones", IParam::kFlagsNone, "ADSR");
   GetParam(kParamVelocityFunction)->InitInt("Velocity Curve", 6, 0, 11, "", IParam::kFlagsNone, "ADSR");
-  GetParam(kParamSustain)->InitDouble("Sustain", 50., 0., 100., 1, "%", IParam::kFlagsNone, "ADSR");
-  GetParam(kParamRelease)->InitDouble("Release", 10., 2., 1000., 0.1, "ms", IParam::kFlagsNone, "ADSR");
-  GetParam(kParamBufferRenderMode)->InitEnum("Render Mode", 1, {"Off", "Low Latency", "Original Driver"});
-  GetParam(kParamLFORateHz)->InitFrequency("LFO Rate", 1., 0.01, 40.);
+
+  //GetParam(kParamSustain)->InitDouble("Sustain", 50., 0., 100., 1, "%", IParam::kFlagsNone, "ADSR");
+  //GetParam(kParamRelease)->InitDouble("Release", 10., 2., 1000., 0.1, "ms", IParam::kFlagsNone, "ADSR");
+  //GetParam(kParamBufferRenderMode)->InitEnum("Render Mode", 1, {"Off", "Low Latency", "Original Driver"});
+  //GetParam(kParamLFORateHz)->InitFrequency("LFO Rate", 1., 0.01, 40.);
   //GetParam(kParamLFORateTempo)->InitEnum("LFO Rate", LFO<>::k1, {LFO_TEMPODIV_VALIST});
-  GetParam(kParamLFORateMode)->InitBool("LFO Sync", true);
-  GetParam(kParamLFODepth)->InitPercentage("LFO Depth");
+  //GetParam(kParamLFORateMode)->InitBool("LFO Sync", true);
+  //GetParam(kParamLFODepth)->InitPercentage("LFO Depth");
     
 #if IPLUG_EDITOR // http://bit.ly/2S64BDd
   mMakeGraphicsFunc = [&]() {
