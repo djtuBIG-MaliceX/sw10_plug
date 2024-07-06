@@ -36,21 +36,6 @@
 #include <intrin.h>
 #endif
 
-
-//#if defined(_MSC_VER) && (defined(VLSG_BUILD_DLL) || defined(VLSG_IMPORT_DLL))
-//#define VLSG_IMPORT         __declspec(dllimport)
-//#define VLSG_EXPORT         __declspec(dllexport)
-//#define VLSG_CALLTYPE       __stdcall
-//#else
-#define VLSG_IMPORT
-#define VLSG_EXPORT
-#define VLSG_CALLTYPE
-//#endif
-
-typedef int VLSG_Bool;
-#define VLSG_FALSE  0
-#define VLSG_TRUE   1
-
 #define MIDI_CHANNELS 16
 #define DRUM_CHANNEL 9
 #define MAX_VOICES 256  // hehehe
@@ -64,7 +49,7 @@ typedef struct
   int16_t expression;
   int16_t volume;
   int16_t pitch_bend;
-  int16_t pan;
+  int16_t pan;    // 0 is middle even though MIDI val=64
   uint16_t chflags;
   int16_t pitch_bend_sense;
   int16_t fine_tune;
@@ -190,21 +175,18 @@ public:
   constexpr const char* VLSG_GetName(void) const;
   uint32_t VLSG_GetTime(void);
   void VLSG_SetFunc_GetTime(uint32_t (*get_time)());
-  VLSG_Bool VLSG_SetParameter(uint32_t type, uintptr_t value);
-  VLSG_Bool VLSG_SetWaveBuffer(void* ptr);
-  VLSG_Bool VLSG_SetRomAddress(const void* ptr);
-  VLSG_Bool VLSG_SetFrequency(unsigned int frequency);
-  VLSG_Bool VLSG_SetPolyphony(unsigned int poly);
-  VLSG_Bool VLSG_SetEffect(unsigned int effect);
-  VLSG_Bool VLSG_SetVelocityFunc(unsigned int curveIdx);
-  VLSG_Bool VLSG_Init(void);
-  VLSG_Bool VLSG_Exit(void);
+  bool VLSG_SetParameter(uint32_t type, uintptr_t value);
+  bool VLSG_SetWaveBuffer(void* ptr);
+  bool VLSG_SetRomAddress(const void* ptr);
+  bool VLSG_SetFrequency(unsigned int frequency);
+  bool VLSG_SetPolyphony(unsigned int poly);
+  bool VLSG_SetEffect(unsigned int effect);
+  bool VLSG_SetVelocityFunc(unsigned int curveIdx);
+  bool VLSG_PlaybackStart(void);
+  bool VLSG_PlaybackStop(void);
   void VLSG_Write(const void* data, uint32_t len);
   int32_t VLSG_Buffer(uint32_t output_buffer_counter);
-  int32_t VLSG_PlaybackStart(void);
-  int32_t VLSG_PlaybackStop(void);
   void VLSG_AddMidiData(uint8_t* ptr, uint32_t len);
-  int32_t VLSG_FillOutputBuffer(uint32_t output_buffer_counter);
 
   // Invasive workarounds
   int32_t VLSG_BufferVst(uint32_t output_buffer_counter, double** output, int nFrames, iplug::IMidiQueue& mMidiQueue, iplug::IMidiQueueBase<iplug::ISysEx>& mSysExQueue);
@@ -218,6 +200,7 @@ private:
   uint32_t dword_C0000004;
   uint32_t dword_C0000008;
   int32_t output_size_para;
+  int phaseAcc = INT_MIN;
   uint32_t system_time_2;
   uint8_t event_data[256];
   uint32_t recent_voice_index;
@@ -251,10 +234,10 @@ private:
   int32_t* reverb_data_ptr = nullptr;
   uint32_t(*get_time_func)();
 
-  int32_t InitializeVelocityFunc(void);
-  constexpr int32_t EMPTY_DeinitializeVelocityFunc(void);
-  int32_t InitializeVariables(void);
-  int32_t EMPTY_DeinitializeVariables(void);
+  bool InitializeVelocityFunc(void);
+  constexpr bool EMPTY_DeinitializeVelocityFunc(void);
+  bool InitializeVariables(void);
+  constexpr bool EMPTY_DeinitializeVariables(void);
   void CountActiveVoices(void);
   void SetMaximumVoices(int maximum_voices);
   Voice_Data* FindAvailableVoice(int32_t channel_num_2, int32_t note_number);
@@ -263,20 +246,20 @@ private:
   void NoteOn(int32_t ch);
   void ControlChange(void);
   void SystemExclusive(void);
-  int32_t InitializeReverbBuffer(void);
-  int32_t DeinitializeReverbBuffer(void);
+  bool InitializeReverbBuffer(void);
+  bool DeinitializeReverbBuffer(void);
   void EnableReverb(void);
   void DisableReverb(void);
   void SetReverbShift(uint32_t shift);
   void DefragmentVoices(void);
   void GenerateOutputData(uint8_t* output_ptr, uint32_t offset1, uint32_t offset2);
-  void GenerateOutputDataVst(double** output_ptr, uint32_t offset1, uint32_t offset2); // invasive workaround
-  int32_t InitializeMidiDataBuffer(void);
-  int32_t EMPTY_DeinitializeMidiDataBuffer(void);
+  inline void GenerateOutputDataVst(double** output_ptr, uint32_t offset1, uint32_t offset2); // invasive workaround
+  bool InitializeMidiDataBuffer(void);
+  bool EMPTY_DeinitializeMidiDataBuffer(void);
   void AddByteToMidiDataBuffer(uint8_t value);
   uint8_t GetValueFromMidiDataBuffer(void);
-  int32_t InitializePhase(void);
-  int32_t EMPTY_DeinitializePhase(void);
+  bool InitializePhase(void);
+  bool EMPTY_DeinitializePhase(void);
   void voice_set_freq(Voice_Data* voice_data_ptr, int32_t pitch);
   int32_t voice_get_index(Voice_Data* voice_data_ptr, int32_t pitch);
   void ProgramChange(Program_Data* program_data_ptr, uint32_t program_number);
@@ -297,8 +280,8 @@ private:
   int32_t sub_C0036FB0(int16_t value3);
   void sub_C0036FE0(void);
   void sub_C0037140(void);
-  int32_t InitializeStructures(void);
-  int32_t EMPTY_DeinitializeStructures(void);
+  bool InitializeStructures(void);
+  bool EMPTY_DeinitializeStructures(void);
   void ResetAllControllers(Channel_Data* channel_data_ptr);
   void ResetChannel(Channel_Data* channel_data_ptr);
   uint32_t rom_change_bank(uint32_t bank, int32_t index);

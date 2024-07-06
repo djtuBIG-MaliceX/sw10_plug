@@ -70,7 +70,7 @@ private:
   std::unique_ptr<uint8_t[]> wav_buffer; // NOTE: SAMPLES ARE int16_t stereo interleaved!
   int bufferMode;
   int frequency = 2;
-  int polyphony = 4;
+  int polyphony = 3;
   int reverb_effect = 0;
 
   uint8_t* load_rom_file(const char* romname);
