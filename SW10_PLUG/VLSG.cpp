@@ -311,6 +311,9 @@ bool VLSG::VLSG_SetParameter(uint32_t type, uintptr_t value)
             else if (value == 0x14) { // Experimental
               return VLSG_SetPolyphony(128);
             }
+            else if (value == 0x15) { // Experimental
+              return VLSG_SetPolyphony(256);
+            }
             return VLSG_SetPolyphony(24);
 
         case PARAMETER_Effect:
