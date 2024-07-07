@@ -589,7 +589,7 @@ int32_t VLSG::VLSG_Buffer(uint32_t output_buffer_counter)
 // Seriously CBF that hardcoded buffer BS so writing the output directly on demand.
 int32_t VLSG::VLSG_BufferVst(uint32_t output_buffer_counter, double** output, int nFrames, iplug::IMidiQueue& mMidiQueue, iplug::IMidiQueueBase<iplug::ISysEx>& mSysExQueue)
 {
-  int quant = 1; //(nFrames > output_size_para) ? output_size_para : 1;
+  int quant = 1;
   int frames_left = nFrames;
 
   for (int offset1 = 0; frames_left > 0; frames_left -= quant)
@@ -606,16 +606,30 @@ int32_t VLSG::VLSG_BufferVst(uint32_t output_buffer_counter, double** output, in
       mSysExQueue.Remove();
     }
 
-    while (!mMidiQueue.Empty()) {
-      auto msg = mMidiQueue.Peek();
-      if (msg.mOffset > offset1) break; // assume chronological order
-
-      ProcessMidiDataVst(msg);
-      mMidiQueue.Remove();
-    }
-
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // FIXME: Due to the way ADSR envelopes work every output_size_para samples,
+    //        so too does the note processing.  Until the Phase generation processor
+    //        can be written to be more 'sample-accurate', can't really do much about
+    //        this otherwise there will be weird intermittent pops/clicks on note-ons.
+    ///////////////////////////////////////////////////////////////////////////////////////
+    //while (!mMidiQueue.Empty()) {
+    //  auto msg = mMidiQueue.Peek();
+    //  if (msg.mOffset > offset1) break; // assume chronological order
+    //
+    //  ProcessMidiDataVst(msg);
+    //  mMidiQueue.Remove();
+    //}
+    ///////////////////////////////////////////////////////////////////////////////////////
+    
     // Do not progress envelope phase until after output_size_para frames (as per original hardcoded BS)
     if (phaseAcc == INT_MIN || phaseAcc >= output_size_para) {
+      while (!mMidiQueue.Empty()) {
+        auto msg = mMidiQueue.Peek();
+        if (msg.mOffset > offset1) break; // assume chronological order
+
+        ProcessMidiDataVst(msg);
+        mMidiQueue.Remove();
+      }
       ProcessPhase();
       phaseAcc = (phaseAcc < quant) ? 0 : (phaseAcc - output_size_para);
     }
@@ -1046,21 +1060,21 @@ constexpr bool VLSG::EMPTY_DeinitializeVariables(void)
     return true;
 }
 
-void VLSG::CountActiveVoices(void)
+inline void VLSG::CountActiveVoices(void)
 {
-    int active_voices, index;
+  //int active_voices = 0;
+  current_polyphony = 0;
 
-    active_voices = 0;
-
-    // TODO track this in real-time rather than per-Block Request
-    for (index = 0; index < maximum_polyphony; index++)
-    {
-        if (voice_data[index].note_number != 255)
-        {
-            active_voices++;
-        }
-    }
-    current_polyphony = active_voices;
+  // TODO track this in real-time rather than per-Block Request
+  for (int index = 0; index < maximum_polyphony; index++)
+  {
+      if (voice_data[index].note_number != 255)
+      {
+        //active_voices++;
+        ++current_polyphony;
+      }
+  }
+  //current_polyphony = active_voices;
 }
 
 void VLSG::ReduceActiveVoices(int32_t maximum_voices)
@@ -1436,10 +1450,10 @@ void VLSG::ProcessSysExDataVst(iplug::ISysEx& msg)
     event_length = 0;
   }
 
-  system_time_1 = VLSG_GetTime();
+  //system_time_1 = VLSG_GetTime();
 }
 
-void VLSG::ProcessMidiDataVst(iplug::IMidiMsg& msg)
+inline void VLSG::ProcessMidiDataVst(iplug::IMidiMsg& msg)
 {
   uint8_t *midi_value_ptr = parseMidiMsg(msg);
 
@@ -1986,8 +2000,8 @@ inline void VLSG::GenerateOutputDataVst(double **output_ptr, uint32_t offset1, u
 {
   int index1, max_active_index;
   unsigned int index2;
-  int64_t left;
-  int64_t right;
+  int32_t left;
+  int32_t right;
   uint32_t value1;
   uint32_t value2;
   uint32_t value3;
@@ -2165,8 +2179,8 @@ inline void VLSG::GenerateOutputDataVst(double **output_ptr, uint32_t offset1, u
     //  right = -32767;
     //}
 
-    (output_ptr)[0][index2] = ((double)left) / 32768.0;
-    (output_ptr)[1][index2] = ((double)right) / 32768.0;
+    (output_ptr)[0][index2] = left / 32768.0;
+    (output_ptr)[1][index2] = right / 32768.0;
   }
 }
 
@@ -2626,12 +2640,24 @@ void VLSG::ProcessPhase(void)
     }
 }
 
-int32_t VLSG::sub_C0036FB0(int16_t value3)
+inline int32_t VLSG::sub_C0036FB0(int16_t value3)
 {
-  if (value3 <= 0)
-    return 0;
-
   int32_t value1 = 0;
+
+  if (value3 <= 0 || value3 > 16)
+    return value1;
+#ifdef _MSC_VER
+  unsigned long index;
+  _BitScanReverse(&index, value3);
+  return 4 - static_cast<int32_t>(index);
+#else
+  // __builtin_clz counts the leading zeros, and 27 is subtracted because:
+  // - 32 bits in int - 5 bits in range 0 to 31 (we have 16 as max input)
+  //   so (32 - 5 = 27) makes sure we count correctly for the range 1 to 16.
+  return 4 - ((31 - __builtin_clz(value3)) - 27);
+#endif
+
+#if 0
   int32_t value2 = 16;
 
   while (value2 >= value3)
@@ -2641,21 +2667,6 @@ int32_t VLSG::sub_C0036FB0(int16_t value3)
   }
 
   return value1;
-#if 0
-    int32_t value1, value2;
-
-    value1 = 0;
-    value2 = 16;
-    do
-    {
-        if (value2 < value3)
-        {
-            break;
-        }
-        value1++;
-        value2 >>= 1;
-    } while (value2);
-    return value1;
 #endif
 }
 

@@ -40,7 +40,7 @@ SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
 
   //GetParam(kParamSustain)->InitDouble("Sustain", 50., 0., 100., 1, "%", IParam::kFlagsNone, "ADSR");
   //GetParam(kParamRelease)->InitDouble("Release", 10., 2., 1000., 0.1, "ms", IParam::kFlagsNone, "ADSR");
-  //GetParam(kParamBufferRenderMode)->InitEnum("Render Mode", 1, {"Off", "Low Latency", "Original Driver"});
+  GetParam(kParamBufferRenderMode)->InitEnum("Render Mode", 1, {"Off", "Low Latency", "Original Driver"});
   //GetParam(kParamLFORateHz)->InitFrequency("LFO Rate", 1., 0.01, 40.);
   //GetParam(kParamLFORateTempo)->InitEnum("LFO Rate", LFO<>::k1, {LFO_TEMPODIV_VALIST});
   //GetParam(kParamLFORateMode)->InitBool("LFO Sync", true);
@@ -80,11 +80,12 @@ SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
     const IRECT sliders = b.GetGridCell(1, 4, 3); //.Union(controls.GetGridCell(3, 2, 6)).Union(controls.GetGridCell(4, 1, 4));
     pGraphics->AttachControl(new IVSliderControl(sliders.GetGridCell(0, 1, 4), kParamPitchBendRange, "P.Bend Rng"));
     pGraphics->AttachControl(new IVSliderControl(sliders.GetGridCell(1, 1, 4), kParamVelocityFunction, "Vel. Curve"));
-    //pGraphics->AttachControl(new IVSliderControl(sliders.GetGridCell(2, 1, 4).GetMidHPadded(30.), kParamSustain, "Sustain"));
-    //pGraphics->AttachControl(new IVSliderControl(sliders.GetGridCell(3, 1, 4).GetMidHPadded(30.), kParamRelease, "Release"));
+    polyIndicator = new ITextControl(sliders.GetGridCell(2, 1, 4), "Cur. Poly");  // Framework will deallocate for us.
+    pGraphics->AttachControl(polyIndicator); 
+
     pGraphics->AttachControl(new IVLEDMeterControl<2>(b.GetFromRight(100).GetPadded(-5).GetReducedFromBottom(100)), kCtrlTagMeter);
-      
-    pGraphics->AttachControl(new IVButtonControl(keyboardBounds.GetFromTRHC(200, 30).GetTranslated(0, -300), SplashClickActionFunc,
+
+    pGraphics->AttachControl(new IVButtonControl(keyboardBounds.GetFromTRHC(200, 30).GetTranslated(0, -500), SplashClickActionFunc,
       "Show/Hide Keyboard", DEFAULT_STYLE.WithColor(kFG, COLOR_WHITE).WithLabelText({15.f, EVAlign::Middle})))->SetAnimationEndActionFunction(
       [pGraphics](IControl* pCaller) {
         static bool hide = false;
@@ -210,7 +211,7 @@ int SW10_PLUG::start_synth(void)
 
   // set output buffer
   outbuf_counter = 0;
-  memset(wav_buffer.get(), 0, 131072);
+  memset(wav_buffer.get(), 0, 262144);
   vlsgInstance->VLSG_SetParameter(PARAMETER_OutputBuffer, (uintptr_t)wav_buffer.get());
 
   // start playback
@@ -221,6 +222,7 @@ int SW10_PLUG::start_synth(void)
 
 void SW10_PLUG::stop_synth(void)
 {
+  polyIndicator = nullptr;
   vlsgInstance->VLSG_PlaybackStop();
   //munmap(rom_address, ROMSIZE); // TODO unload
 }
@@ -229,10 +231,14 @@ void SW10_PLUG::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 {
   static int renderedSampleQueueSize = 0;
   static uint16_t renderOffset = 0;
+  static char polyBuf[4] = "%d";
+  int32_t poly;
 
   if (bufferMode == 1) {
     // Attempt 1 - directly render as requested to output buffer (without respecting internal timer code)
-    vlsgInstance->VLSG_BufferVst(outbuf_counter, outputs, nFrames, mMidiQueue, mSysExQueue);
+    poly = vlsgInstance->VLSG_BufferVst(outbuf_counter, outputs, nFrames, mMidiQueue, mSysExQueue);
+    if (polyIndicator != nullptr)
+      polyIndicator->SetStrFmt(4, polyBuf, poly);
     mMidiQueue.Flush(nFrames);
     mSysExQueue.Flush(nFrames);
   } else if (bufferMode == 2) {
@@ -245,7 +251,9 @@ void SW10_PLUG::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 
     for (int sampleIdx = 0, frameIdx = 0; frameIdx < nFrames; ) {
       if (renderedSampleQueueSize <= 0) {
-        vlsgInstance->VLSG_Buffer(outbuf_counter);
+        poly = vlsgInstance->VLSG_Buffer(outbuf_counter);
+        if (polyIndicator != nullptr) 
+          polyIndicator->SetStrFmt(4, "%d", poly);
         renderedSampleQueueSize += 1024;
         ++outbuf_counter;
       }
@@ -285,6 +293,12 @@ void SW10_PLUG::ProcessSysEx(const ISysEx& msg)
   }
   
   printf("SysEx (fragment) of size %d\n", length);
+}
+
+void SW10_PLUG::OnUIClose()
+{
+  // TODO unhandle
+  polyIndicator = nullptr;
 }
 
 void SW10_PLUG::ProcessMidiMsg(const IMidiMsg& msg)

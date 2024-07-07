@@ -61,6 +61,7 @@ public:
   void OnParamChangeUI(int paramIdx, EParamSource source) override;
   void OnIdle() override;
   bool OnMessage(int msgTag, int ctrlTag, int dataSize, const void* pData) override;
+  void OnUIClose() override;
 
 private:
   std::unique_ptr<VLSG> vlsgInstance;
@@ -72,6 +73,8 @@ private:
   int frequency = 2;
   int polyphony = 3;
   int reverb_effect = 0;
+  //std::unique_ptr<ITextControl> polyIndicator;
+  ITextControl* polyIndicator = nullptr;
 
   uint8_t* load_rom_file(const char* romname);
   void lsgWrite(uint8_t* event, unsigned int length, int offset = 0);

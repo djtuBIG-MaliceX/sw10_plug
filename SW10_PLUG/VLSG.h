@@ -27,8 +27,9 @@
 
 #include <cstdint>
 #include <cstddef>
-#include <string.h>
+#include <cstring>
 #include <climits>
+#include <cmath>
 #include "IPlug_include_in_plug_hdr.h"
 
 #ifdef _MSC_VER
@@ -191,8 +192,8 @@ public:
   // Invasive workarounds
   int32_t VLSG_BufferVst(uint32_t output_buffer_counter, double** output, int nFrames, iplug::IMidiQueue& mMidiQueue, iplug::IMidiQueueBase<iplug::ISysEx>& mSysExQueue);
   void ProcessMidiData(void);
-  void ProcessMidiDataVst(iplug::IMidiMsg& msg);
-  void ProcessSysExDataVst(iplug::ISysEx& msg);
+  inline void ProcessMidiDataVst(iplug::IMidiMsg& msg);   // TODO adapt for pluggable queue
+  inline void ProcessSysExDataVst(iplug::ISysEx& msg);    // TODO adapt for pluggable queue
   void ProcessPhase(void);
 
 private:
@@ -238,7 +239,7 @@ private:
   constexpr bool EMPTY_DeinitializeVelocityFunc(void);
   bool InitializeVariables(void);
   constexpr bool EMPTY_DeinitializeVariables(void);
-  void CountActiveVoices(void);
+  inline void CountActiveVoices(void);
   void SetMaximumVoices(int maximum_voices);
   Voice_Data* FindAvailableVoice(int32_t channel_num_2, int32_t note_number);
   Voice_Data* FindVoice(int32_t channel_num_2, int32_t note_number);
@@ -277,7 +278,7 @@ private:
   void voice_set_flags(Voice_Data* voice_data_ptr);
   void voice_set_flags2(Voice_Data* voice_data_ptr);
   void voice_set_amp(Voice_Data* voice_data_ptr);
-  int32_t sub_C0036FB0(int16_t value3);
+  inline int32_t sub_C0036FB0(int16_t value3);
   void sub_C0036FE0(void);
   void sub_C0037140(void);
   bool InitializeStructures(void);
