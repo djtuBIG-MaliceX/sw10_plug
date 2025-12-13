@@ -6,7 +6,7 @@
         //     "type": "lldb",
         //     "request": "launch",
         //     "program": "/Applications/REAPER.app",
-        //     "args": ["${workspaceFolder}/TemplateProject/TemplateProject.RPP"],
+        //     "args": ["${workspaceFolder}/SW10_PLUG/SW10_PLUG.RPP"],
         //     "preLaunchTask": "build VST2 Debug",
         // },
         // {
@@ -14,7 +14,7 @@
         //     "type": "lldb",
         //     "request": "launch",
         //     "program": "/Applications/REAPER.app",
-        //     "args": ["${workspaceFolder}/TemplateProject/TemplateProject.RPP"],
+        //     "args": ["${workspaceFolder}/SW10_PLUG/SW10_PLUG.RPP"],
         //     "preLaunchTask": "build VST3 Debug",
         // },
         // {
@@ -22,14 +22,14 @@
         //     "type": "lldb",
         //     "request": "launch",
         //     "program": "/Applications/REAPER.app",
-        //     "args": ["${workspaceFolder}/TemplateProject/TemplateProject.RPP"],
+        //     "args": ["${workspaceFolder}/SW10_PLUG/SW10_PLUG.RPP"],
         //     "preLaunchTask": "build AUv2 Debug",
         // },
         {
             "name": "(lldb) Launch APP",
             "type": "lldb",
             "request": "launch",
-            "program": "~/Applications/TemplateProject.app",
+            "program": "~/Applications/SW10_PLUG.app",
             "preLaunchTask": "build APP Debug"
         }
     ]

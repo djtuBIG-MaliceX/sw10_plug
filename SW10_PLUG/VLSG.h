@@ -33,7 +33,9 @@
 #include "IPlug_include_in_plug_hdr.h"
 
 #ifdef _MSC_VER
+#ifndef __cplusplus
 #define inline __inline
+#endif
 #include <intrin.h>
 #endif
 

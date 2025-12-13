@@ -601,14 +601,6 @@ int32_t VLSG::VLSG_BufferVst(uint32_t output_buffer_counter, double** output, in
     if (frames_left < quant)
       quant = frames_left;
 
-    while (!mSysExQueue.Empty()) {
-      auto msg = mSysExQueue.Peek();
-      if (msg.mOffset > offset1) break; // assume chronological order
-
-      ProcessSysExDataVst(msg);
-      mSysExQueue.Remove();
-    }
-
     ///////////////////////////////////////////////////////////////////////////////////////
     // FIXME: Due to the way ADSR envelopes work every output_size_para samples,
     //        so too does the note processing.  Until the Phase generation processor
@@ -626,6 +618,14 @@ int32_t VLSG::VLSG_BufferVst(uint32_t output_buffer_counter, double** output, in
     
     // Do not progress envelope phase until after output_size_para frames (as per original hardcoded BS)
     if (phaseAcc == INT_MIN || phaseAcc >= output_size_para) {
+      while (!mSysExQueue.Empty()) {
+        auto msg = mSysExQueue.Peek();
+        if (msg.mOffset > offset1) break; // assume chronological order
+
+        ProcessSysExDataVst(msg);
+        mSysExQueue.Remove();
+      }
+
       while (!mMidiQueue.Empty()) {
         auto msg = mMidiQueue.Peek();
         if (msg.mOffset > offset1) break; // assume chronological order

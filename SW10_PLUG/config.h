@@ -1,7 +1,7 @@
 #define PLUG_NAME "SW10_PLUG"
 #define PLUG_MFR "cassiopeia"
-#define PLUG_VERSION_HEX 0x00000001
-#define PLUG_VERSION_STR "0.0.1"
+#define PLUG_VERSION_HEX 0x00000003
+#define PLUG_VERSION_STR "0.0.3"
 #define PLUG_UNIQUE_ID 'SW10'
 #define PLUG_MFR_ID 'djtB'
 #define PLUG_URL_STR "https://www.codingchords.com"
