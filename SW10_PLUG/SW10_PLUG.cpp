@@ -114,7 +114,7 @@ char* SW10_PLUG::handleDllPath(const char* romname) {
   static char path[MAX_PATH] = "";
   HMODULE hm = nullptr;
 
-  if (GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+  if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
     GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
     (LPCSTR)&lsgGetTime, &hm) == 0)
   {
@@ -122,7 +122,7 @@ char* SW10_PLUG::handleDllPath(const char* romname) {
     fprintf(stderr, "GetModuleHandle failed, error = %d\n", ret);
     return path;
   }
-  if (GetModuleFileName(hm, path, sizeof(path)) == 0)
+  if (GetModuleFileNameA(hm, path, sizeof(path)) == 0)
   {
     int ret = GetLastError();
     fprintf(stderr, "GetModuleFileName failed, error = %d\n", ret);

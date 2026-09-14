@@ -307,6 +307,7 @@
     <ClInclude Include="..\VLSG.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\..\iPlug2\WDL\win32_utf8.c" />
     <ClCompile Include="..\..\iPlug2\IGraphics\Controls\IControls.cpp" />
     <ClCompile Include="..\..\iPlug2\IGraphics\Controls\IPopupMenuControl.cpp" />
     <ClCompile Include="..\..\iPlug2\IGraphics\Controls\ITextEntryControl.cpp" />
