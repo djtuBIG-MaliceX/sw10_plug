@@ -194,6 +194,24 @@ Smoke: `SW10_PLUG.exe` (x64) alive after 5s, MainWindowTitle `SW10_PLUG` ✅.
 
 Presets store real absolute paths for the local machine; CI overrides with workspace paths / artifacts.
 
+### Phase 2 done (2026-09-15) — notes
+
+- `cmake/iplug2_paths.cmake` implements the table above as `SW10_*` cache vars with env fallbacks
+  (`VST3_SDK_DIR`, `VST2_SDK_DIR`) and FATAL_ERROR messages naming the exact fix. Consumed from the new
+  root `CMakeLists.txt` (min 3.25). `cmake -B b32 -A Win32` and `-A x64` both configure with SDK
+  detection green (VS 18 2026 generator; no CMake-4 policy hacks needed — we do **not** add_subdirectory
+  vst3sdk, upstream `VST3.cmake` compiles the needed SDK sources directly).
+- Upstream consumption route: `include(iPlug2/iPlug2.cmake)` + `find_package(iPlug2 REQUIRED)` exactly like
+  upstream Examples — **not** `add_subdirectory(iPlug2)` (that would drag in Examples/Tests). `SW10_IPLUG2_DIR`
+  forwards into upstream's `IPLUG2_DIR`. Upstream has no SDK-path cache vars (paths are hardcoded
+  `IPLUG2_DIR`-relative), so `iplug2_paths.cmake` maps the SW10 knobs *onto* those locations:
+  auto-creates the `Dependencies/IPlug/VST3_SDK` junction (mklink /J, no admin) pointing at
+  `SW10_VST3_SDK_DIR`, and copies `aeffect.h`/`aeffectx.h` into the `VST2_SDK` stub from
+  `SW10_VST2_SDK_DIR` when missing (automates the Phase-1 manual step; untracked/gitignored files only,
+  gitlink untouched).
+- `SW10_DEPS_WIN_DIR` is only hard-checked when `IGRAPHICS_BACKEND=SKIA` (NanoVG needs no downloads).
+  `SW10_COPY_ROM` (ON by default) FATALs on a missing ROM locally; ci presets set it OFF.
+
 ## 6. Phase 3 — CMake build system (core work)
 
 ### New files
