@@ -315,12 +315,27 @@ sw10_core (STATIC, $<CONFIG>/$<ARCH>-aware defines)
 
 For each cell: build OK + binary loads & makes sound:
 
+### Phase 4 verified (2026-09-15, CMake builds via `vs-*-release` presets, NanoVG/GL2)
+
 | Target | Win32 | x64 |
 |---|---|---|
-| app (exe) | ☐ | ☐ |
-| vst2 (dll) | ☐ | ☐ |
-| vst3 | ☐ | ☐ |
-| clap | ☐ | ☐ |
+| app (exe) | ✅ build + smoke (window `SW10_PLUG`, ROM) | ✅ build + smoke |
+| vst2 (dll) | ✅ build + load-harness¹ | ✅ build + load-harness¹ |
+| vst3 | ✅ build + load-harness¹ | ✅ build + load-harness¹ |
+| clap | ✅ build + load-harness¹ | ✅ build + load-harness¹ |
+
+¹ `SW10_PLUG/scripts/loadtest.ps1 -Arch <a>` (PowerShell P/Invoke; auto-relaunches 32-bit artifacts
+under SysWOW64 PowerShell): LoadLibrary with ROM staged → VST2 `VSTPluginMain` → `AEffect` magic `VstP` /
+unique `0x53573130` ('SW10') / version 3 + `effOpen`/`effGetVersion`/`effClose`; VST3 `InitDll` →
+`GetPluginFactory` → `countClasses`=1 + `getClassInfo` ('SW10…', 'Audio Module Class') + Release +
+`ExitDll` (note: on x86 `PLUGIN_API` is `__stdcall` → `GetPluginFactory` is exported `_GetPluginFactory@0`
+and vtable calls need stdcall delegates — the harness handles both); CLAP `clap_entry` v1.2 →
+`init(path)`=true → `get_factory("clap.plugin-factory")`² non-null → `deinit`.
+² CLAP 1.2 factory id is `"clap.plugin-factory"` (`clap/factory/plugin-factory.h`), not the old `"clap.plugin"`.
+
+**Sound: pending interactive host — REAPER is not installed on this box**, so no cell claims audio
+output; load-harness pass = module loads, entry points respond, ROM found next to the binary.
+
 
 > Interim (2026-09-15, MSBuild fallback on current pin): all four targets **build** in both archs and the
 > **app** smoke-passes (window + ROM + UI) in Win32 & x64 — see Phase 0 baseline notes. Host load/sound for
