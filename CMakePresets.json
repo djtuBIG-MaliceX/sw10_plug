@@ -1,0 +1,77 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "generator": "Visual Studio 18 2026",
+      "binaryDir": "${sourceDir}/build-cmake/_bld/${presetName}",
+      "cacheVariables": {
+        "CMAKE_CONFIGURATION_TYPES": "Debug;Release"
+      }
+    },
+    {
+      "name": "vs-x64",
+      "displayName": "VS 2026 x64",
+      "description": "All targets, x64 (NanoVG/GL2). SDKs via SW10_* cache vars / env.",
+      "inherits": "base",
+      "architecture": { "value": "x64", "strategy": "set" }
+    },
+    {
+      "name": "vs-win32",
+      "displayName": "VS 2026 Win32",
+      "description": "All targets, Win32 (NanoVG/GL2). SDKs via SW10_* cache vars / env.",
+      "inherits": "base",
+      "architecture": { "value": "Win32", "strategy": "set" }
+    },
+    {
+      "name": "vs-x64-xp",
+      "displayName": "VS 2026 x64 (v141_xp toolset - experimental)",
+      "description": "XP attempt via v141_xp. NON-FUNCTIONAL unless the 'MSVC v141 (VS 2017 v141_xp)' toolset + Windows 7.1A SDK components are installed (absent on the refactor box, 2026-09-15) - see REFACTOR_PLAN.md XP decision gate.",
+      "inherits": "vs-x64",
+      "toolset": "v141_xp"
+    },
+    {
+      "name": "vs-win32-xp",
+      "displayName": "VS 2026 Win32 (v141_xp toolset - experimental)",
+      "description": "XP attempt via v141_xp. NON-FUNCTIONAL unless the 'MSVC v141 (VS 2017 v141_xp)' toolset + Windows 7.1A SDK components are installed (absent on the refactor box, 2026-09-15) - see REFACTOR_PLAN.md XP decision gate.",
+      "inherits": "vs-win32",
+      "toolset": "v141_xp"
+    },
+    {
+      "name": "ci-win64",
+      "displayName": "CI x64",
+      "description": "CI: SDK dirs from env (VST3_SDK_DIR, VST2_SDK_DIR), no ROM staging.",
+      "inherits": "vs-x64",
+      "cacheVariables": {
+        "SW10_VST3_SDK_DIR": "$env{VST3_SDK_DIR}",
+        "SW10_VST2_SDK_DIR": "$env{VST2_SDK_DIR}",
+        "SW10_COPY_ROM": "OFF",
+        "SW10_POSTBUILD_INSTALL": "OFF"
+      }
+    },
+    {
+      "name": "ci-win32",
+      "displayName": "CI Win32",
+      "description": "CI: SDK dirs from env (VST3_SDK_DIR, VST2_SDK_DIR), no ROM staging.",
+      "inherits": "vs-win32",
+      "cacheVariables": {
+        "SW10_VST3_SDK_DIR": "$env{VST3_SDK_DIR}",
+        "SW10_VST2_SDK_DIR": "$env{VST2_SDK_DIR}",
+        "SW10_COPY_ROM": "OFF",
+        "SW10_POSTBUILD_INSTALL": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "vs-x64-debug", "configurePreset": "vs-x64", "configuration": "Debug" },
+    { "name": "vs-x64-release", "configurePreset": "vs-x64", "configuration": "Release" },
+    { "name": "vs-win32-debug", "configurePreset": "vs-win32", "configuration": "Debug" },
+    { "name": "vs-win32-release", "configurePreset": "vs-win32", "configuration": "Release" },
+    { "name": "vs-win32-xp-release", "configurePreset": "vs-win32-xp", "configuration": "Release" },
+    { "name": "ci-win64-release", "configurePreset": "ci-win64", "configuration": "Release" },
+    { "name": "ci-win32-release", "configurePreset": "ci-win32", "configuration": "Release" }
+  ]
+}

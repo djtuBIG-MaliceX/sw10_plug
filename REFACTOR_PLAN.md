@@ -212,9 +212,59 @@ Presets store real absolute paths for the local machine; CI overrides with works
 - `SW10_DEPS_WIN_DIR` is only hard-checked when `IGRAPHICS_BACKEND=SKIA` (NanoVG needs no downloads).
   `SW10_COPY_ROM` (ON by default) FATALs on a missing ROM locally; ci presets set it OFF.
 
-## 6. Phase 3 — CMake build system (core work)
+## 6. Phase 3 — CMake build system (core work) — **DONE 2026-09-15**
+
+### Phase 3 results (VS 18 2026, NanoVG/GL2)
+
+Full matrix green first pass: `cmake --preset vs-{x64,win32}` + `cmake --build --preset vs-*-release` →
+8/8 targets link with **zero errors/warnings introduced** (only the two pre-existing source warnings
+C4477/C4700). Artifacts exactly mirror sln naming/layout:
+
+| Target | x64 | Win32 |
+|---|---|---|
+| `build-cmake/app/<arch>/Release/SW10_PLUG.exe` | ✅ smoke (window `SW10_PLUG`, ROM) | ✅ smoke |
+| `build-cmake/vst2/<arch>/Release/SW10_PLUG.dll` | ✅ | ✅ |
+| `build-cmake/vst3/<arch>/Release/SW10_PLUG.vst3/Contents/{x86_64-win,x86-win}/SW10_PLUG.vst3` (+`Resources/`) | ✅ | ✅ |
+| `build-cmake/clap/<arch>/Release/SW10_PLUG.clap` | ✅ | ✅ |
+
+`ROMSXGM.BIN` staged post-build next to every binary incl. the vst3 bundle bin dir (`SW10_COPY_ROM`,
+ci presets set OFF). `/MT` verified via `dumpbin /dependents` (no `vcruntime140.dll`/`msvcp140.dll`;
+`OPENGL32.dll` present via the NanoVG pragma). No `.def` files needed (entries are `dllexport`ed).
+
+Deviations from the §6 sketch (all deliberate):
+
+- **Graphics backend = NanoVG/GL2, not Skia.** Plan §6's "Skia for CMake" predates discovering that
+  upstream's *default* Windows backend is NanoVG/GL2 (matches the proven sln artifacts; `IGRAPHICS_BACKEND`
+  defaults to `NANOVG`) and that upstream's Windows `iPlug2::IGraphics::Skia` target links a
+  `Build/src/skia/out/Release-x64` merged-lib layout our `download-prebuilt-libs.sh` deps do not ship.
+  `SW10_DEPS_WIN_DIR` (FAT-checked only when `IGRAPHICS_BACKEND=SKIA`) keeps the Skia door open; a
+  working build beat an ideal one (task brief).
+- **No `sources_core.cmake`/`rt_audio_midi.cmake`/`cmake/vst2|vst3|clap` glue** — upstream
+  `iPlug2::{IPlug,IGraphics,APP,VST2,VST3,CLAP,Extras::Synth}` INTERFACE targets (consumed via
+  `include(iPlug2/iPlug2.cmake)` + `find_package(iPlug2)`) ARE the source lists; `SW10_PLUG/CMakeLists.txt`
+  only creates the 4 targets (`sw10_app`, `sw10_vst2`, `sw10_vst3`, `sw10_clap`), calls
+  `iplug_configure_target()` per API, then overrides output dirs to `build-cmake/<api>/<arch>/<Config>/`.
+- vst3sdk is **not** `add_subdirectory`'d — upstream `VST3.cmake` compiles the needed SDK sources into
+  the plugin target directly, so `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded…` covers them trivially
+  (the §1 "vst3sdk /MD default" risk never materialized; no CMake-4 policy override needed either).
+- `resources/main.rc` compiled on **all four** targets (sln parity for version-info/dialog IDs; APP-only
+  functionally). Upstream's `iplug_configure_vst3` POST_BUILD still `make_directory`s a stray
+  `build-cmake/_bld/*/out/SW10_PLUG.vst3/Contents/Resources` because we redirect outputs — cosmetic.
+- `IPLUG_DEPLOY_PLUGINS` forced OFF; `SW10_POSTBUILD_INSTALL=ON` implements the old Program-Files
+  deploy ourselves (VST2→`%PROGRAMFILES%\VstPlugins`, VST3→`%CommonProgramFiles%\VST3`,
+  CLAP→`%CommonProgramFiles%\CLAP`) since upstream's deploy paths assume its `out/` layout.
+- **XP decision gate (§2.4): FAILED on this box** — `vs-win32-xp`/`vs-xp64` presets exist but configure
+  errors `MSB8020: build tools for v141_xp cannot be found` (VS 2026 registers toolsets v150–v180 only;
+  the v141 14.16 compiler is present but not the `_xp` toolset wiring / 7.1A SDK). Presets kept and
+  documented; XP shipping needs the "MSVC v141, VS 2017 v141_xp" VS component or the clang-cl Plan B.
+  NanoVG backend removes the prebuilt-Skia XP blocker; **Win7 x86 remains the practical floor**
+  (static CRT on modern toolset runs on Win7).
 
 ### New files
+
+> Implemented: `CMakeLists.txt`, `CMakePresets.json`, `cmake/iplug2_paths.cmake`,
+> `SW10_PLUG/CMakeLists.txt`. The `sources_core.cmake`/`rt_audio_midi.cmake`/per-API glue below were
+> superseded by upstream's CMake modules (see deviations above); sketch kept for reference.
 
 ```
 CMakeLists.txt              # top-level; options SW10_BUILD_{APP,VST2,VST3,CLAP} (all ON)
