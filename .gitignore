@@ -1,7 +1,11 @@
 .DS_Store
 xcuserdata
 *.RPP-bak
-build-*
+# Build output dirs: anchor to repo root so workflows/build-*.yml (unanchored 'build-*'
+# silently ignored build-native.yml & build-wam.yml — they were never committed!) stay tracked.
+/build-*
+SW10_PLUG/build-*
+iPlug2/**/build-*
 
 *.ipch
 *.db

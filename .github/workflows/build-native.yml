@@ -1,0 +1,95 @@
+name: Build Native
+
+on:
+  push:
+  workflow_dispatch:
+
+env:
+  PROJECT_NAME: SW10_PLUG
+
+# CMake pipeline (Phase 5 of the build refactor — see REFACTOR_PLAN.md §8).
+# The legacy msbuild/xcodeproj CI flow is retired here; the .sln remains the local
+# fallback (msbuild needs /p:PlatformToolset=v145 on the current pin) and macOS/iOS
+# continue to build via their xcodeproj. AAX is dropped (§2.3). build-wam.yml untouched.
+jobs:
+  build-windows:
+    name: Windows CMake (${{ matrix.arch }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            preset: ci-win64
+          - arch: Win32
+            preset: ci-win32
+
+    steps:
+    - name: Check out repository (with iPlug2 submodule)
+      uses: actions/checkout@v4
+      with:
+        submodules: true
+        fetch-depth: 1
+
+    - name: Check out VST3 SDK (v3.8.1_build_84, submodules)
+      uses: actions/checkout@v4
+      with:
+        repository: steinbergmedia/vst3sdk
+        ref: v3.8.1_build_84
+        submodules: true
+        path: vendor/vst3sdk
+        fetch-depth: 1
+
+    - name: Download iPlug2 prebuilt libs (Skia/Freetype — only needed for the SKIA backend)
+      working-directory: iPlug2/Dependencies
+      run: ./download-prebuilt-libs.sh win
+      shell: bash
+
+    - name: Download CLAP SDK + helpers
+      working-directory: iPlug2/Dependencies
+      run: ./download-clap-sdks.sh
+      shell: bash
+
+    - name: Configure (${{ matrix.arch }})
+      # VST2 is deliberately OFF on CI: vstsdk2.4 is proprietary and cannot be
+      # downloaded here. To build VST2, host the SDK as a private action artifact /
+      # self-hosted runner and export VST2_SDK_DIR before this step (plus drop
+      # -DSW10_BUILD_VST2=OFF), or use the local makedist-win.bat path.
+      env:
+        VST3_SDK_DIR: ${{ github.workspace }}/vendor/vst3sdk
+      run: cmake --preset ${{ matrix.preset }} -DSW10_BUILD_VST2=OFF
+      shell: pwsh
+
+    - name: Build Release (${{ matrix.arch }})
+      run: cmake --build --preset ${{ matrix.preset }}-release
+      shell: pwsh
+
+    - name: "Smoke: app launches"
+      run: |
+        $exe = "build-cmake/app/${{ matrix.arch }}/Release/SW10_PLUG.exe"
+        $p = Start-Process $exe -PassThru
+        Start-Sleep -Seconds 5
+        $alive = Get-Process -Id $p.Id -ErrorAction SilentlyContinue
+        if ($null -eq $alive) { throw "app did not stay alive" }
+        Stop-Process -Id $p.Id -Force
+      shell: pwsh
+
+    - name: Stage ROM for artifacts (path only — ROM file itself is not distributable here)
+      run: |
+        # Consumers must place ROMSXGM.BIN next to the binary (handleDllPath).
+        # CI cannot ship it (copyrighted); drop a README stub into each output dir.
+        Get-ChildItem build-cmake -Recurse -Directory -Filter Release | ForEach-Object {
+          Set-Content -Path (Join-Path $_.FullName "ROM-REQUIRED.txt") -Value "Place ROMSXGM.BIN next to the plugin/app binary before use."
+        }
+      shell: pwsh
+
+    - name: Upload artifacts (${{ matrix.arch }})
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.PROJECT_NAME }}-win-${{ matrix.arch }}
+        path: |
+          build-cmake/app/${{ matrix.arch }}/Release/
+          build-cmake/vst2/${{ matrix.arch }}/Release/
+          build-cmake/vst3/${{ matrix.arch }}/Release/
+          build-cmake/clap/${{ matrix.arch }}/Release/
+        if-no-files-found: error

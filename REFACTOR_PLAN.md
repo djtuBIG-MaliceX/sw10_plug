@@ -182,7 +182,7 @@ Phase 1 additions (2026-09-15, pin `d54f69050`):
 
 Smoke: `SW10_PLUG.exe` (x64) alive after 5s, MainWindowTitle `SW10_PLUG` ✅.
 
-## 5. Phase 2 — SDK wiring (design for CMake cache variables)
+## 5. Phase 2 — SDK wiring (design for CMake cache variables) — **DONE 2026-09-15**
 
 | CMake var | Default | Points at |
 |---|---|---|
@@ -311,7 +311,7 @@ sw10_core (STATIC, $<CONFIG>/$<ARCH>-aware defines)
 - **XP presets**: try VS2026 "C++ build tools for v141_xp / Windows 7.1A SDK" components via `-T host=x86,v141_xp` (probably absent for VS2026) → Plan B: clang-cl + legacy SDK/crt dirs in `CMAKE_..._INIT`. **Decision gate**: test Skia target on XP VM; if Skia can't run, XP builds = VST2 only (document).
 - `CMakePresets.json` v3+: `base` preset (VS 18 2026 generator, x64), `vs-win32`, `vs-win32-xp`, CI preset using env SDK paths.
 
-## 7. Phase 4 — Verification matrix (definition of done)
+## 7. Phase 4 — Verification matrix (definition of done) — **DONE 2026-09-15**
 
 For each cell: build OK + binary loads & makes sound:
 
@@ -338,19 +338,48 @@ output; load-harness pass = module loads, entry points respond, ROM found next t
 
 
 > Interim (2026-09-15, MSBuild fallback on current pin): all four targets **build** in both archs and the
-> **app** smoke-passes (window + ROM + UI) in Win32 & x64 — see Phase 0 baseline notes. Host load/sound for
-> vst2/vst3/clap and the full CMake matrix remain the Phase 4 DoD. ☐ cells below track the *CMake* build+sound matrix.
+> **app** smoke-passes (window + ROM + UI) in Win32 & x64 — see Phase 0 baseline notes. The CMake matrix above
+> (Phase 4) supersedes it; only *sound* in an interactive host remains open.
 
-- Load hosts available: REAPER paths auto-detected in old props (`VST2_64_HOST_PATH`…) — reuse `sw10_* /DEBUG launch` presets for VS debugging per target (old vcxproj `LocalDebugger` settings embed REAPER + `SW10_PLUG.RPP`).
+- Load hosts available: REAPER paths auto-detected in old props (`VST2_64_HOST_PATH`…) — reuse `sw10_* /DEBUG launch`
+  presets for VS debugging per target (old vcxproj `LocalDebugger` settings embed REAPER + `SW10_PLUG.RPP`).
 - Smoke test at minimum: `sw10_app` launches with UI (MIDI input device may be absent — at least window + knobs render), plugin binaries load in REAPER w/ ROM found.
 - `git status` clean except intended files; no `build-cmake` committed.
 
-## 8. Phase 5 — CI & scripts & docs
+## 8. Phase 5 — CI & scripts & docs — **DONE 2026-09-15**
 
-- [ ] Rewrite `.github/workflows/build-native.yml`: fix `PROJECT_NAME: SW10_PLUG`; steps = checkout submodules → run SDK download scripts (VST3 via script; **VST2 cannot be downloaded** → vst2 job runs only when `vstsdk2.4.zip` uploaded as Actions artifact/secret or job allowed to fail) → `cmake --preset ci-win32 / ci-win64` → `cmake --build` → upload artifacts. Keep `build-wam.yml` untouched.
-- [ ] Convert `SW10_PLUG/scripts/makedist-win.bat` to a thin wrapper: run `prebuild-win.bat` equivalents (version stamping via `update_version.py`/`prepare_resources-win.py` stay), cmake configure+build both archs, call InnoSetup `installer/SW10_PLUG.iss` (or `cpack`). Keep old msbuild path behind `-Legacy` switch initially.
-- [ ] Update `README.md` (build section: CMake quickstart, SDK env vars, ROM file requirement, drop AAX mention).
-- [ ] Update `AGENTS.md` phase checkboxes + deviations.
+- [x] Rewrote `.github/workflows/build-native.yml`: `PROJECT_NAME: SW10_PLUG`; matrix over `ci-win64`/`ci-win32`
+      presets; steps = checkout (submodules) → checkout `vst3sdk@v3.8.1_build_84` (submodules) →
+      `download-prebuilt-libs.sh` + `download-clap-sdks.sh` (Git-Bash) → `cmake --preset ci-win* -DSW10_BUILD_VST2=OFF`
+      → `cmake --build --preset ci-win*-release` → app smoke → **VST2 gated OFF** with an inline comment on how to
+      re-enable (private artifact/self-hosted runner + `VST2_SDK_DIR`). Artifacts per arch (`upload-artifact@v4`) +
+      a `ROM-REQUIRED.txt` stub per output dir (ROM not distributable). `build-wam.yml` untouched; not pushed/run.
+- [x] `makedist-win.bat`: **CMake is the default path** (prebuild `prepare_resources-win.py`/`update_installer_version.py`
+      stay → `cmake --preset vs-x64/vs-win32` + build Release → stage `build-cmake/*` into legacy `build-win/` names so
+      the unchanged `installer/SW10_PLUG.iss` works → InnoSetup `iscc` if present, else skip). Old msbuild flow kept
+      behind `-Legacy` (still points at the VS2019 `vcvarsall`; a comment notes the VS2026 path + `/p:PlatformToolset=v145`).
+      Batch not executed here (no InnoSetup/VS2019 on box); reviewed for cwd correctness (root vs `SW10_PLUG/`).
+- [x] `README.md`: added a CMake quickstart (presets, output layout, `SW10_BUILD_*` toggles, NanoVG/GL2, `/MT`,
+      ROM auto-stage, SDK env/cache vars, `loadtest.ps1`, `makedist-win.bat`), and the "Not included" list notes the
+      ROM is a runtime requirement next to each binary.
+- [x] `AGENTS.md`: build commands → real working presets + `loadtest.ps1` + `makedist-win.bat`; corrected the pin
+      (`d54f69050`) and graphics (CMake = NanoVG/GL2, Skia caveated); repo-map now points at the CMake files/CI;
+      Status section has dated Phase 2–5 lines with commit hashes and deviations.
+
+- [x] **Repo discovery:** the root `.gitignore` `build-*` pattern was unanchored and silently ignored
+      `.github/workflows/build-native.yml` **and** `build-wam.yml` — neither was ever tracked (the old
+      native CI literally never ran on GitHub!). Fixed: `/build-*` + `SW10_PLUG/build-*` + `iPlug2/**/build-*`;
+      `build-native.yml` (rewritten) now commits; `build-wam.yml` joins the index **content-unchanged**
+      (only now can it be versioned). `SW10_PLUG/.gitignore` has its own `build-*` (kept; still covers
+      `SW10_PLUG/build-win`), and `ROMSXGM.BIN`/`aeffect*.h` stay ignored repo-wide.
+
+### Remaining open items (not Phase 5 blockers)
+- **Sound / interactive-host (REAPER) verification** — deferred (no REAPER on the box); Phase 4 harness proves load
+  + entry-point wiring only.
+- **XP floor**: `-xp` presets present but inert until the `v141_xp` toolset + Win7.1A SDK are installed (or clang-cl
+  Plan B). Win7 x86 is the pragmatic floor today (NanoVG/GL2, static CRT).
+- **Skia backend**: still selectable but Windows upstream lib layout diverges from our deps zip; untested at link.
+- Skia-lib `SW10_DEPS_WIN_DIR` wiring is present but only FAT-checked when `IGRAPHICS_BACKEND=SKIA`.
 
 ## 9. Risks
 
