@@ -311,6 +311,61 @@ sw10_core (STATIC, $<CONFIG>/$<ARCH>-aware defines)
 - **XP presets**: try VS2026 "C++ build tools for v141_xp / Windows 7.1A SDK" components via `-T host=x86,v141_xp` (probably absent for VS2026) → Plan B: clang-cl + legacy SDK/crt dirs in `CMAKE_..._INIT`. **Decision gate**: test Skia target on XP VM; if Skia can't run, XP builds = VST2 only (document).
 - `CMakePresets.json` v3+: `base` preset (VS 18 2026 generator, x64), `vs-win32`, `vs-win32-xp`, CI preset using env SDK paths.
 
+## 6b. MinGW-w64 (MSYS2) toolchain support — **DONE 2026-09-15**
+
+The CMake build now also targets **MinGW-w64 (GCC and Clang) via the Ninja generator** in
+addition to MSVC/Visual Studio. Verified in the MSYS2 MINGW64 shell (GCC 16.2, Clang 22.1,
+CMake 4.x): all four targets (app/vst2/vst3/clap) build under BOTH compilers, are
+self-contained (system-DLL imports only, no `libgcc`/`libstdc++`/`winpthread`), export the
+correct entry points (`VSTPluginMain` / `GetPluginFactory` / `clap_entry`), and pass the
+DAW-less `loadtest.ps1` (real Win64 `LoadLibrary` + init + factory enumeration).
+
+**Build (MSYS2 MINGW64 shell):**
+```sh
+cmake --preset mingw-x64         && cmake --build --preset mingw-x64-release   # GCC
+cmake --preset mingw-clang-x64   && cmake --build --preset mingw-clang-x64-release
+pwsh SW10_PLUG/scripts/loadtest.ps1 -Arch x64 -ArchDir x64-mingw        # GCC   (added -ArchDir)
+pwsh SW10_PLUG/scripts/loadtest.ps1 -Arch x64 -ArchDir x64-mingw-clang  # Clang
+```
+Output lives in `build-cmake/<api>/x64-mingw[-clang]/<Config>/` (the `-clang` suffix keeps the
+two toolchains from clobbering each other; `SW10_ARCH` carries the suffix, the VST3 bundle arch
+still keys off `CMAKE_SIZEOF_VOID_P`). x86_64 only — a 32-bit MinGW build needs the separate
+`mingw-w64-i686` toolchain and is not wired.
+
+**Every change is guarded by `MINGW` / `Clang` / `__GNUC__` so the MSVC path is byte-identical.**
+New files: `cmake/mingw_compat.cmake` (auto-included at configure when `MINGW`),
+`cmake/mingw_portability_prelude.h` (force-included into every MinGW C++ TU). No iPlug2
+submodule edits were required — everything lives in the superproject, so nothing is lost on a
+submodule checkout (contrast §3b).
+
+What MinGW needs that MSVC gives for free:
+- **Root gate** widened from `NOT MSVC` to `NOT (MSVC OR MINGW)`; `CMAKE_MSVC_RUNTIME_LIBRARY`
+  now MSVC-only (`mingw_compat` handles the MinGW static runtime instead).
+- **MSVC `.lib` names** hard-coded on the upstream `iPlug2::IPlug`/`iPlug2::APP`/`OSC`
+  INTERFACE targets (`Shlwapi.lib`, `comctl32.lib`, `wininet.lib`, `dsound.lib`, `winmm.lib`,
+  `ws2_32.lib`) are rewritten to bare `-l` names in `mingw_compat` (ld won't find `Foo.lib`;
+  Skia/WebView2 file-path libs are left alone — unused by the NanoVG MinGW path).
+- **NanoVG/GL2 is the enabling choice**: it compiles `nanovg.c`+`glad.c` from source inside
+  `IGraphicsWin.cpp` and `glad` `LoadLibrary`s `opengl32.dll`, so NO MSVC-built prebuilt graphics
+  libs are linked (unlike SKIA). `wgl*`/`SwapBuffers` are still referenced directly, so
+  `mingw_compat` `link_libraries(opengl32 gdi32)` (GCC ignores `#pragma comment(lib,...)`).
+- **Compile/link flags**: `-Wa,-mbig-obj` (the IGraphicsWin unity TU overflows COFF section
+  limits), `-fpermissive` (GCC: iPlug/APP assign `FARPROC`→`void*`), static runtime
+  (`-static -static-libgcc -static-libstdc++`), `_USE_MATH_DEFINES` (M_PI under `__STRICT_ANSI__`).
+- **Prelude force-include** fixes libstdc++ missing transitively-included headers
+  (`<memory>`→`std::unique_ptr` in `VoiceAllocator.h`, `<cmath>`, `<ctime>`, …) across iPlug/WDL/SDK.
+- **Clang extras**: `GetProcAddress` is macro-wrapped to cast to `void*` (clang hard-errors on the
+  FARPROC→void* conversion that `-fpermissive` cannot downgrade) — defined only AFTER
+  `<windows.h>` so the header's own declaration isn't clobbered; and `UNICODE`/`_UNICODE`
+  per-source on Steinberg `fstring.cpp`/`dllmain.cpp` (they pass `wchar_t*` to `FoldString`/
+  `GetModuleFileName`, which pick the ANSI entry points without `UNICODE`; nothing in the build
+  sets it globally because the MSVC ANSI build only survives via MSVC leniency).
+- **Two first-party source fixes**: `SW10_PLUG.h` `clock_gettime`/`i64` shim now `_MSC_VER`-only
+  (MinGW gets a real POSIX `clock_gettime` from the prelude); `SW10_PLUG.cpp` locally expands
+  `CLAP_EXPORT` to `extern __attribute__((dllexport))` for GNU/Clang around the CLAP entry
+  definitions (GCC/Clang reject `dllexport` on a namespace-scope `const`; MSVC tolerates it).
+- `loadtest.ps1` gained `-ArchDir` (defaults to `-Arch`) so it can target the MinGW output dirs.
+
 ## 7. Phase 4 — Verification matrix (definition of done) — **DONE 2026-09-15**
 
 For each cell: build OK + binary loads & makes sound:

@@ -59,8 +59,15 @@ you complete work.**
 # configure + build one arch (all targets: app/vst2/vst3/clap)
 cmake --preset vs-x64    ; cmake --build --preset vs-x64-release
 cmake --preset vs-win32  ; cmake --build --preset vs-win32-release
-# CI-equivalent (SDK dirs from env VST3_SDK_DIR/VST2_SDK_DIR, no ROM): ci-win64 / ci-win32
+# CI-equivalent (SDK dirs from env VST3_SDK_DIR/VST2_SDK_DIR, no ROM): ci-win32 / ci-win64
 pwsh SW10_PLUG/scripts/loadtest.ps1 -Arch x64   # DAW-less plugin load test
+
+# MinGW-w64 (MSYS2 MINGW64 shell only, x86_64): GCC + Clang both build all 4 targets (Ninja).
+# Artifacts: build-cmake/<api>/x64-mingw[-clang]/<Config>/. No iPlug2 submodule edits.
+cmake --preset mingw-x64       ; cmake --build --preset mingw-x64-release        # GCC
+cmake --preset mingw-clang-x64 ; cmake --build --preset mingw-clang-x64-release  # Clang
+pwsh SW10_PLUG/scripts/loadtest.ps1 -Arch x64 -ArchDir x64-mingw        # GCC   load test
+pwsh SW10_PLUG/scripts/loadtest.ps1 -Arch x64 -ArchDir x64-mingw-clang  # Clang load test
 ```
 
 Outputs land in `build-cmake/<api>/<arch>/<Config>/` with `ROMSXGM.BIN` copied alongside
@@ -134,3 +141,8 @@ See phase checklists in `REFACTOR_PLAN.md`. Done so far:
   vst3sdk tag checkout, prebuilt+CLAP downloads, VST2 gated OFF (proprietary), artifacts per arch + ROM-REQUIRED stub.
   `makedist-win.bat`: CMake path default (stages legacy build-win names for the unchanged .iss), `-Legacy` = old msbuild.
   README/AGENTS/plan docs updated. Still open: interactive-host sound verification, XP toolset install or clang-cl Plan B.
+- **MinGW-w64 toolchain support (2026-09-15).** CMake now also builds under MSYS2 MINGW64 **GCC and Clang**
+  (Ninja, x86_64): all 4 targets compile/link, self-contained (system-DLL imports only), entry points export,
+  `loadtest.ps1` passes for both compilers. Zero iPlug2 submodule edits — all shims live in `cmake/mingw_compat.cmake`
+  + `cmake/mingw_portability_prelude.h`, guarded by `MINGW`/`Clang` so the MSVC path is unchanged. New presets
+  `mingw-x64[-debug]`/`mingw-clang-x64`/`mingw-ci-x64` (+ matching build presets); `loadtest.ps1` gained `-ArchDir`. Full write-up: REFACTOR_PLAN.md §6b.

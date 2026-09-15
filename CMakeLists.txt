@@ -5,11 +5,18 @@
 cmake_minimum_required(VERSION 3.25)
 project(SW10_PLUG VERSION 0.0.3 LANGUAGES C CXX)
 
-if(NOT WIN32 OR NOT MSVC)
+if(NOT WIN32 OR NOT (MSVC OR MINGW))
   message(FATAL_ERROR
-    "The SW10_PLUG CMake build targets Windows with the Visual Studio generator "
-    "(e.g. 'Visual Studio 18 2026', -A Win32|x64). Use the legacy .vcxproj/.xcodeproj "
+    "The SW10_PLUG CMake build targets Windows with either the Visual Studio generator "
+    "(e.g. 'Visual Studio 18 2026', -A Win32|x64) or the MinGW-w64 (MSYS2 MINGW64, x86_64) "
+    "GCC/Clang toolchain via the 'Ninja' generator. Use the legacy .vcxproj/.xcodeproj "
     "projects for other platforms/toolchains.")
+endif()
+
+if(MSVC)
+  set(SW10_TOOLCHAIN "msvc")
+elseif(MINGW)
+  set(SW10_TOOLCHAIN "mingw")
 endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
@@ -46,9 +53,16 @@ set(IPLUG_DEPLOY_PLUGINS OFF CACHE BOOL "iPlug2 auto-deploy (unused; SW10_POSTBU
 include(${IPLUG2_DIR}/iPlug2.cmake)
 find_package(iPlug2 REQUIRED)
 
+# MinGW-w64 (MSYS2) compatibility: remap the MSVC import-library names the upstream
+# iPlug2 INTERFACE targets hardcode, and add static-runtime / big-obj flags. No-op on MSVC.
+include(mingw_compat)
+
 # Static /MT CRT everywhere (matches common-win.props; upstream sets the same default).
-set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
-    CACHE STRING "static CRT for all targets incl. compiled VST3 SDK sources" FORCE)
+# MSVC-only knob — MinGW static runtime is handled in cmake/mingw_compat.cmake.
+if(MSVC)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+      CACHE STRING "static CRT for all targets incl. compiled VST3 SDK sources" FORCE)
+endif()
 
 # ---------------------------------------------------------------------------
 # Output layout: build-cmake/<api>/<arch>/<Config>/ with the sln artifact names
@@ -58,13 +72,23 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 8)
 else()
   set(SW10_ARCH "Win32")
 endif()
+# Keep MinGW artifacts in their own <arch>-mingw dir so they never collide with the
+# MSVC build in the shared build-cmake root (output dir segment only; SDK arch logic
+# in SW10_PLUG/CMakeLists.txt keys off CMAKE_SIZEOF_VOID_P, not this variable).
+# Clang gets its own -clang suffix too so the two MinGW toolchains do not clobber each other.
+if(MINGW)
+  set(SW10_ARCH "${SW10_ARCH}-mingw")
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    string(APPEND SW10_ARCH "-clang")
+  endif()
+endif()
 set(SW10_OUTPUT_ROOT "${CMAKE_SOURCE_DIR}/build-cmake" CACHE PATH
     "Artifact root; outputs land in <root>/<api>/${SW10_ARCH}/<Config>/")
 
 add_subdirectory(SW10_PLUG)
 
 message(STATUS "SW10_PLUG configure summary:")
-message(STATUS "  arch=${SW10_ARCH}  graphics=${IGRAPHICS_BACKEND}/${IGRAPHICS_RENDERER}")
+message(STATUS "  toolchain=${SW10_TOOLCHAIN}  arch=${SW10_ARCH}  graphics=${IGRAPHICS_BACKEND}/${IGRAPHICS_RENDERER}")
 message(STATUS "  app=${SW10_BUILD_APP} vst2=${SW10_BUILD_VST2} vst3=${SW10_BUILD_VST3} clap=${SW10_BUILD_CLAP} (AAX dropped)")
 message(STATUS "  ROM copy=${SW10_COPY_ROM} (${SW10_ROM_PATH})")
 message(STATUS "  outputs -> ${SW10_OUTPUT_ROOT}/<api>/${SW10_ARCH}/<Config>/")

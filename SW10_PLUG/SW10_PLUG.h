@@ -6,6 +6,10 @@
 
 const int kNumPresets = 1;
 
+#ifdef _MSC_VER
+// MSVC-only shim: pre-C++11 / older MSVC lacked clock_gettime. MinGW provides a real
+// POSIX clock_gettime (<ctime>, force-included by the MinGW portability prelude), so
+// defining it here would collide and the i64/__int64 literals below are MSVC-only.
 int clock_gettime(int, struct timespec* spec)      //C-file part
 {
   __int64 wintime; GetSystemTimeAsFileTime((FILETIME*)&wintime);
@@ -14,6 +18,7 @@ int clock_gettime(int, struct timespec* spec)      //C-file part
   spec->tv_nsec = wintime % 10000000i64 * 100;      //nano-seconds
   return 0;
 }
+#endif
 
 
 enum EParams

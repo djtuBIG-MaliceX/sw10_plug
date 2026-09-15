@@ -13,18 +13,20 @@
 #>
 param(
   [ValidateSet('x64','Win32')][string]$Arch = 'x64',
+  [string]$ArchDir = '',
   [string]$Root = (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'build-cmake'),
   [switch]$NoRelaunch
 )
 
 $ErrorActionPreference = 'Stop'
 $want64 = ($Arch -eq 'x64')
+if (-not $ArchDir) { $ArchDir = $Arch }   # MinGW artifacts live in <arch>-mingw; pass -ArchDir x64-mingw
 if (([Environment]::Is64BitProcess -ne $want64) -and -not $NoRelaunch) {
   if ($want64) {
     Write-Error "this shell is 32-bit but -Arch x64 requested"; exit 1
   }
   $ps32 = Join-Path $env:SystemRoot 'SysWOW64\WindowsPowerShell\v1.0\powershell.exe'
-  & $ps32 -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -Arch $Arch -Root $Root -NoRelaunch
+  & $ps32 -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -Arch $Arch -ArchDir $ArchDir -Root $Root -NoRelaunch
   exit $LASTEXITCODE
 }
 if (([Environment]::Is64BitProcess -ne $want64)) { Write-Error "bitness mismatch after relaunch"; exit 1 }
@@ -255,10 +257,10 @@ function Run-Case([string]$api, [string]$path, [scriptblock]$test) {
   $script:results += "{0} {1} {2} {3}" -f ($detail.Split(' ')[0]), $api, $Arch, $detail.Substring($detail.IndexOf(' ')+1) + " [$path]"
 }
 
-Write-Host "SW10 loadtest ($Arch, root=$Root)"
-Run-Case 'vst2' (Join-Path $Root "vst2\$Arch\Release\SW10_PLUG.dll")   { [LoadTest]::TestVst2($path) }
-Run-Case 'vst3' (Join-Path $Root "vst3\$Arch\Release\SW10_PLUG.vst3\Contents\$(if ($Arch -eq 'x64') {'x86_64-win'} else {'x86-win'})\SW10_PLUG.vst3") { [LoadTest]::TestVst3($path) }
-Run-Case 'clap' (Join-Path $Root "clap\$Arch\Release\SW10_PLUG.clap")  { [LoadTest]::TestClap($path) }
+Write-Host "SW10 loadtest ($Arch, dir=$ArchDir, root=$Root)"
+Run-Case 'vst2' (Join-Path $Root "vst2\$ArchDir\Release\SW10_PLUG.dll")   { [LoadTest]::TestVst2($path) }
+Run-Case 'vst3' (Join-Path $Root "vst3\$ArchDir\Release\SW10_PLUG.vst3\Contents\$(if ($Arch -eq 'x64') {'x86_64-win'} else {'x86-win'})\SW10_PLUG.vst3") { [LoadTest]::TestVst3($path) }
+Run-Case 'clap' (Join-Path $Root "clap\$ArchDir\Release\SW10_PLUG.clap")  { [LoadTest]::TestClap($path) }
 $results | ForEach-Object { Write-Host $_ }
 $fail = ($results | Where-Object { $_ -like 'FAIL*' }).Count
 exit $fail

@@ -1,5 +1,29 @@
 #include "SW10_PLUG.h"
+
+#if defined(CLAP_API) && (defined(__GNUC__) || defined(__clang__))
+// MinGW/Clang portability fix (no iPlug2 submodule edit). GCC/Clang reject
+// __attribute__((dllexport)) on a namespace-scope `const` definition — even with a prior
+// extern declaration (unlike MSVC, which tolerates it). Upstream defines the CLAP entry
+// points as `CLAP_EXPORT const clap_plugin_*_t x = {...}`. We locally expand CLAP_EXPORT
+// to `extern __attribute__((dllexport))` (external linkage + export) so those two
+// definitions in IPlug_include_in_plug_src.h (next include) are valid and exported. All of
+// the CLAP SDK's own CLAP_EXPORT uses (many on static-inline helpers) were already processed
+// through SW10_PLUG.h above (header-guarded), so this stays local to the entry points.
+#undef CLAP_EXPORT
+#define CLAP_EXPORT extern __attribute__((dllexport))
+#endif
+
 #include "IPlug_include_in_plug_src.h"
+
+#if defined(CLAP_API) && (defined(__GNUC__) || defined(__clang__))
+#undef CLAP_EXPORT
+#if defined(_WIN32) || defined(__CYGWIN__)
+#define CLAP_EXPORT __attribute__((dllexport))
+#else
+#define CLAP_EXPORT __attribute__((visibility("default")))
+#endif
+#endif
+
 #include <sstream>
 
 static struct timespec start_time;

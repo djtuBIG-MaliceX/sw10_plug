@@ -27,6 +27,26 @@ Load-test without a DAW: `pwsh SW10_PLUG/scripts/loadtest.ps1 -Arch x64|Win32`.
 One-shot distribution script: `SW10_PLUG/scripts/makedist-win.bat` (CMake + installer; add `-Legacy`
 for the old msbuild flow).
 
+## Build (MinGW-w64 — MSYS2 MINGW64, GCC + Clang, x86_64)
+
+Run from an **MSYS2 MINGW64** shell (needs `mingw-w64-x86_64-{gcc,clang,cmake,ninja}`; the Clang
+preset also needs `mingw-w64-x86_64-clang`). The same SDK/ROM discovery as above applies.
+
+```sh
+cmake --preset mingw-x64       ; cmake --build --preset mingw-x64-release   # GCC
+cmake --preset mingw-clang-x64 ; cmake --build --preset mingw-clang-x64-release  # Clang
+
+# load-test each toolchain (artifacts live in build-cmake/<api>/x64-mingw[-clang]/Release/):
+pwsh SW10_PLUG/scripts/loadtest.ps1 -Arch x64 -ArchDir x64-mingw         # GCC
+pwsh SW10_PLUG/scripts/loadtest.ps1 -Arch x64 -ArchDir x64-mingw-clang   # Clang
+```
+
+All four targets (app/VST2/VST3/CLAP) build under both compilers, statically linked (no
+`libgcc`/`libstdc++`/`winpthread` DLL deps). x86_64 only — 32-bit MinGW would need the
+separate `mingw-w64-i686` toolchain. Everything is gated behind `MINGW`/`Clang` checks in
+`cmake/mingw_compat.cmake` + `cmake/mingw_portability_prelude.h`, so the MSVC build is unchanged
+and the `iPlug2` submodule is never edited. Details: `REFACTOR_PLAN.md` §6b.
+
 ## Not included in repo (find it yourself)
 - ROMSXGM.BIN (Copyrighted Casio ROM) — required next to every binary at runtime
 - VST 2.x SDK (Thanks Steinberg)

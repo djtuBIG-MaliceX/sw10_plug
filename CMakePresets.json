@@ -63,6 +63,57 @@
         "SW10_COPY_ROM": "OFF",
         "SW10_POSTBUILD_INSTALL": "OFF"
       }
+    },
+    {
+      "name": "mingw-base",
+      "hidden": true,
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-cmake/_bld/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "mingw-x64",
+      "displayName": "MinGW-w64 x64 (GCC, Release)",
+      "description": "MSYS2 MINGW64 shell. Ninja + gcc. NanoVG/GL2. Artifacts in build-cmake/<api>/x64-mingw/Release/. SDKs via SW10_* cache vars / env.",
+      "inherits": "mingw-base",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++"
+      }
+    },
+    {
+      "name": "mingw-x64-debug",
+      "displayName": "MinGW-w64 x64 (GCC, Debug)",
+      "description": "MSYS2 MINGW64 shell. Ninja + gcc, Debug build type.",
+      "inherits": "mingw-x64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "mingw-clang-x64",
+      "displayName": "MinGW-w64 x64 (Clang, Release)",
+      "description": "MSYS2 MINGW64 shell. Ninja + clang. NanoVG/GL2. Needs mingw-w64-x86_64-clang.",
+      "inherits": "mingw-base",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "mingw-ci-x64",
+      "displayName": "MinGW-w64 x64 CI (GCC)",
+      "description": "CI: SDK dirs from env (VST3_SDK_DIR, VST2_SDK_DIR), no ROM staging.",
+      "inherits": "mingw-x64",
+      "cacheVariables": {
+        "SW10_VST3_SDK_DIR": "$env{VST3_SDK_DIR}",
+        "SW10_VST2_SDK_DIR": "$env{VST2_SDK_DIR}",
+        "SW10_COPY_ROM": "OFF",
+        "SW10_POSTBUILD_INSTALL": "OFF"
+      }
     }
   ],
   "buildPresets": [
@@ -72,6 +123,10 @@
     { "name": "vs-win32-release", "configurePreset": "vs-win32", "configuration": "Release" },
     { "name": "vs-win32-xp-release", "configurePreset": "vs-win32-xp", "configuration": "Release" },
     { "name": "ci-win64-release", "configurePreset": "ci-win64", "configuration": "Release" },
-    { "name": "ci-win32-release", "configurePreset": "ci-win32", "configuration": "Release" }
+    { "name": "ci-win32-release", "configurePreset": "ci-win32", "configuration": "Release" },
+    { "name": "mingw-x64-release", "configurePreset": "mingw-x64" },
+    { "name": "mingw-x64-debug", "configurePreset": "mingw-x64-debug" },
+    { "name": "mingw-clang-x64-release", "configurePreset": "mingw-clang-x64" },
+    { "name": "mingw-ci-x64-release", "configurePreset": "mingw-ci-x64" }
   ]
 }

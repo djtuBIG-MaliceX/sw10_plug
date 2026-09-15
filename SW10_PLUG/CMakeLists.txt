@@ -23,8 +23,13 @@ set(SW10_PLUGIN_SOURCES
 # resources/main.rc — same file the vcxprojs compile (dialog/menu/accel IDs are APP-only;
 # the plugins embed it just for version-info/icon parity with the sln).
 set(SW10_RC_FILE "${SW10_PROJECT_DIR}/resources/main.rc")
-set_source_files_properties("${SW10_RC_FILE}" PROPERTIES
-  COMPILE_FLAGS "/I\"${SW10_PROJECT_DIR}/resources\" /I\"${SW10_PROJECT_DIR}/resources/fonts\"")
+# Include flags: rc.exe wants /I"...", windres (MinGW) wants -I... (no space, path has none).
+if(MSVC)
+  set(SW10_RC_FLAGS "/I\"${SW10_PROJECT_DIR}/resources\" /I\"${SW10_PROJECT_DIR}/resources/fonts\"")
+else()
+  set(SW10_RC_FLAGS "-I${SW10_PROJECT_DIR}/resources -I${SW10_PROJECT_DIR}/resources/fonts")
+endif()
+set_source_files_properties("${SW10_RC_FILE}" PROPERTIES COMPILE_FLAGS "${SW10_RC_FLAGS}")
 
 function(sw10_common_setup target)
   target_sources(${target} PRIVATE ${SW10_PLUGIN_SOURCES} "${SW10_RC_FILE}")
@@ -41,6 +46,11 @@ function(sw10_common_setup target)
   )
   target_link_libraries(${target} PUBLIC iPlug2::Extras::Synth ${IGRAPHICS_LIB})
   set_property(TARGET ${target} PROPERTY FOLDER "sw10")
+  # MinGW prefixes shared modules with "lib" (libSW10_PLUG.dll/.clap/.vst3); drop it so
+  # DAWs find SW10_PLUG.vst3/.clap exactly as the MSVC/sln build names them.
+  if(MINGW)
+    set_target_properties(${target} PROPERTIES PREFIX "")
+  endif()
 endfunction()
 
 # sw10_set_out_dirs(<target> <api> <RUNTIME|LIBRARY>)
@@ -125,6 +135,20 @@ if(SW10_BUILD_VST3)
     sw10_common_setup(sw10_vst3)
     iplug_configure_target(sw10_vst3 VST3 SW10_PLUG)
     set_target_properties(sw10_vst3 PROPERTIES OUTPUT_NAME "SW10_PLUG" SUFFIX ".vst3")
+    # Clang/MinGW only: two Steinberg SDK sources call FoldString()/GetModuleFileName() with
+    # wchar_t* args that resolve to the ANSI (…A) entry points unless UNICODE is defined for
+    # that TU (nothing in the build sets UNICODE globally — the ANSI MSVC build only gets away
+    # with it via MSVC's leniency, and GCC via -fpermissive; clang makes it a hard error).
+    # Defining UNICODE for just these two files selects the wide (…W) variants they want.
+    # Deliberately NOT applied to the proven GCC path, so that build stays byte-identical.
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+      set(_sw10_vst3sdk "${IPLUG2_DIR}/Dependencies/IPlug/VST3_SDK")
+      set_source_files_properties(
+        "${_sw10_vst3sdk}/base/source/fstring.cpp"
+        "${_sw10_vst3sdk}/public.sdk/source/main/dllmain.cpp"
+        TARGET_DIRECTORY sw10_vst3
+        PROPERTIES COMPILE_DEFINITIONS "UNICODE;_UNICODE")
+    endif()
     if(CMAKE_SIZEOF_VOID_P EQUAL 8)
       set(SW10_VST3_ARCH "x86_64-win")
     else()
