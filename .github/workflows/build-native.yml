@@ -46,7 +46,7 @@ jobs:
       shell: bash
 
     - name: Download CLAP SDK + helpers
-      working-directory: iPlug2/Dependencies
+      working-directory: iPlug2/Dependencies/IPlug
       run: ./download-clap-sdks.sh
       shell: bash
 
