@@ -174,9 +174,10 @@ uint8_t* SW10_PLUG::load_rom_file(const char* romname)
   if (f == nullptr)
   {
     //Fallback - open in current process CWD
-    if (f = fopen(romname, "rb"))
-      return nullptr;
+    f = fopen(romname, "rb");
   }
+  if (f == nullptr)
+    return nullptr;
 
   // Original ROM always 2MB. If using custom ROM, this may need to change.
   mem = (uint8_t*)malloc(2 * 1024 * 1024);
@@ -199,6 +200,7 @@ uint8_t* SW10_PLUG::load_rom_file(const char* romname)
 
 void SW10_PLUG::lsgWrite(uint8_t* event, unsigned int length, int offset)
 {
+  if (rom_address == nullptr) return; // VLSG dereferences ROM data in ProcessMidiData
   const uint32_t time = lsgGetTime();
   const uint8_t* p = reinterpret_cast<const BYTE*>(event);
 
@@ -257,6 +259,17 @@ void SW10_PLUG::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
   static uint16_t renderOffset = 0;
   static char polyBuf[4] = "%d";
   int32_t poly;
+
+  if (rom_address == nullptr) {
+    // ROM failed to load (start_synth returned -1): VLSG would dereference null
+    // ROM data. Stay silent instead of crashing (also keeps ROM-less CI smoke alive).
+    for (int ch = 0; ch < 2; ch++)
+      for (int i = 0; i < nFrames; i++)
+        outputs[ch][i] = 0.0;
+    mMidiQueue.Flush(nFrames);
+    mSysExQueue.Flush(nFrames);
+    return;
+  }
 
   if (bufferMode == 1) {
     // Attempt 1 - directly render as requested to output buffer (without respecting internal timer code)

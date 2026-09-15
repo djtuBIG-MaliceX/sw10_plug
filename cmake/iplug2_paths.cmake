@@ -63,11 +63,21 @@ elseif(WIN32)
   # Auto-create the junction upstream cmake modules expect (untracked; needs no admin).
   file(REMOVE_RECURSE "${SW10_VST3_SDK_LINK}")  # removes stub README dir only if empty-ish
   find_program(CMD_EXE cmd.exe)
-  execute_process(COMMAND "${CMD_EXE}" /c mklink /J "${SW10_VST3_SDK_LINK}" "${SW10_VST3_SDK_DIR}"
-                  RESULT_VARIABLE _sw10_junction_rc OUTPUT_QUIET ERROR_QUIET)
+  # Everything must be native backslash paths: find_program returns cmd.exe with
+  # forward slashes and cmd.exe then rejects its own command line ("syntax is
+  # incorrect"); and mklink parses "/D:/..." style args as option switches
+  # ("Invalid switch"). CI hits this path on a fresh checkout where the junction
+  # never pre-exists (CI failures 2026-09-15).
+  file(TO_NATIVE_PATH "${CMD_EXE}" _sw10_cmd_native)
+  file(TO_NATIVE_PATH "${SW10_VST3_SDK_LINK}" _sw10_link_native)
+  file(TO_NATIVE_PATH "${SW10_VST3_SDK_DIR}" _sw10_target_native)
+  execute_process(COMMAND "${_sw10_cmd_native}" /c mklink /J "${_sw10_link_native}" "${_sw10_target_native}"
+                  RESULT_VARIABLE _sw10_junction_rc
+                  OUTPUT_VARIABLE _sw10_junction_msg ERROR_VARIABLE _sw10_junction_msg)
   if(NOT EXISTS "${SW10_VST3_SDK_LINK}/public.sdk/source/main/dllmain.cpp")
+    string(STRIP "${_sw10_junction_msg}" _sw10_junction_msg)
     message(FATAL_ERROR
-      "Could not populate ${SW10_VST3_SDK_LINK} for the VST3 target (mklink /J rc=${_sw10_junction_rc}).\n"
+      "Could not populate ${SW10_VST3_SDK_LINK} for the VST3 target (mklink /J rc=${_sw10_junction_rc}: ${_sw10_junction_msg})\n"
       "Fix (elevated shell): rmdir \"${SW10_VST3_SDK_LINK}\"  if a stub dir blocks it, then\n"
       "  cmd /c mklink /J \"${SW10_VST3_SDK_LINK}\" \"${SW10_VST3_SDK_DIR}\"\n"
       "  — or run iPlug2/Dependencies/download-vst3-sdk.sh (Git-Bash).")

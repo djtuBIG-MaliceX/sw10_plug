@@ -428,6 +428,20 @@ output; load-harness pass = module loads, entry points respond, ROM found next t
       (only now can it be versioned). `SW10_PLUG/.gitignore` has its own `build-*` (kept; still covers
       `SW10_PLUG/build-win`), and `ROMSXGM.BIN`/`aeffect*.h` stay ignored repo-wide.
 
+### CI fixes post-first-runs (2026-09-15)
+- [x] **Configure crash (both archs):** the VST3 auto-junction in `cmake/iplug2_paths.cmake` never ran locally
+      (junction pre-existed → "already present" branch). On CI's fresh checkout `mklink /J` failed rc=1 for two
+      reasons: `find_program` hands back `C:/Windows/...cmd.exe` and cmd.exe rejects its **own** forward-slash path
+      ("syntax of the command is incorrect"), and forward-slash target/link args get parsed as `/U`-style switches.
+      Fix: `file(TO_NATIVE_PATH)` for cmd.exe + both mklink args; mklink output captured into the FATAL message.
+- [x] **App smoke would die ROM-less** (CI never stages the ROM): null-ROM crashes — `load_rom_file` had inverted
+      fallback logic (`fread` on a null `FILE*`), `ProcessBlock`/`lsgWrite` fed VLSG with `romsxgm_ptr==NULL`
+      (AV in `voice_get_index` via startup `OnParamChange`→RPN `lsgWrite`→`ProcessMidiData`, seen under cdb with
+      MIDI loopback drivers loaded). Guards: `load_rom_file` returns nullptr cleanly; `ProcessBlock` renders
+      silence + flushes queues when ROM missing; `lsgWrite` no-ops. Verified no-ROM: window opens, stays alive.
+- [x] **Artifacts:** dropped `build-cmake/vst2/...` from `upload-artifact` (VST2 gated OFF on CI ⇒ dir absent ⇒
+      `if-no-files-found: error` would fail the upload).
+
 ### Remaining open items (not Phase 5 blockers)
 - **Sound / interactive-host (REAPER) verification** — deferred (no REAPER on the box); Phase 4 harness proves load
   + entry-point wiring only.

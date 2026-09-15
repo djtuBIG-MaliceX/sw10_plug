@@ -87,9 +87,10 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: ${{ env.PROJECT_NAME }}-win-${{ matrix.arch }}
+        # No vst2 path: VST2 is gated OFF on CI (proprietary SDK), so that output
+        # dir never exists and `if-no-files-found: error` would fail the upload.
         path: |
           build-cmake/app/${{ matrix.arch }}/Release/
-          build-cmake/vst2/${{ matrix.arch }}/Release/
           build-cmake/vst3/${{ matrix.arch }}/Release/
           build-cmake/clap/${{ matrix.arch }}/Release/
         if-no-files-found: error
