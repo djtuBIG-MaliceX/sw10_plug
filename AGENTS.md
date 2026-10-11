@@ -146,3 +146,10 @@ See phase checklists in `REFACTOR_PLAN.md`. Done so far:
   `loadtest.ps1` passes for both compilers. Zero iPlug2 submodule edits — all shims live in `cmake/mingw_compat.cmake`
   + `cmake/mingw_portability_prelude.h`, guarded by `MINGW`/`Clang` so the MSVC path is unchanged. New presets
   `mingw-x64[-debug]`/`mingw-clang-x64`/`mingw-ci-x64` (+ matching build presets); `loadtest.ps1` gained `-ArchDir`. Full write-up: REFACTOR_PLAN.md §6b.
+- **Host sample-rate following + 16-channel keyboard UI (2026-10-11).** Sample rate is host-driven (`OnReset`→
+  `VLSG_SetFrequency(GetSampleRate())`; enum param removed); engine cadence/reverb/phase generalized off the
+  11025 Hz reference, reverb buffer dynamic. UI: channel tabs 1–16, GM program dropdown, per-ch Vol/Pan/Expr/Mod
+  faders, Bend|Mod wheels left of the keyboard, octave bar; one iPlug2 edit (`IVKeyboardControl::
+  TriggerMidiMsgFromKeyPress` made virtual — §3b item 9; rebuild after submodule reset!). APP/VST2 user-verified
+  with audio. Details: REFACTOR_PLAN.md §8b. NOTE: `loadtest.ps1` VST2 case AVs under pwsh only (plugin fine in
+  real hosts and a standalone P/Invoke probe — harness quirk, documented §8b; do not "fix" by changing the plugin).

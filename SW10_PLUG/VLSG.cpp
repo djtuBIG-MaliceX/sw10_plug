@@ -25,6 +25,8 @@
 
 #include "VLSG.h"
 
+#include <new>   // std::nothrow for the dynamically sized reverb buffer
+
 const uint32_t dword_C0032188[112+104+40] =
 {
         0,     0,     0,     0,     0,     0,     0,     0,
@@ -347,43 +349,60 @@ bool VLSG::VLSG_SetRomAddress(const void* ptr)
 
 bool VLSG::VLSG_SetFrequency(unsigned int frequency)
 {
-    const double base_freq = 11025.0;
-    const int base_para = 64;
-    const int base_buf = 4096;
-    double freq_ratio = frequency / base_freq;
+    // The original SW-10 driver ran at 11025 Hz with 64-sample processing quanta.
+    // Everything time-based is generalised from that reference so ANY host sample
+    // rate works:
+    //   - output_size_para : integer chunk size (legacy ring-buffer layout, defrag cadence)
+    //   - phase_interval   : exact fractional samples between envelope phase steps, so
+    //                        envelope/LFO rates are identical at every sample rate
+    //   - reverb delays    : scaled to keep the same reverb time at every sample rate
+    //   - v_freq           : per-sample phase increment (see voice_set_freq)
+    constexpr double base_freq = 11025.0;
+    constexpr int base_para = 64;
+
+    // Clamp extreme requests instead of failing - the synth itself is rate-agnostic.
+    if (frequency < 4000)
+        frequency = 4000;
+    else if (frequency > 192000)
+        frequency = 192000;
+
+    const double freq_ratio = frequency / base_freq;
+
+    // Retargeting mid-session leaves sounding voices with phase increments computed
+    // for the old rate (wrong pitch); silence them so retriggered notes are in tune.
+    // (Same benign race as mutating output_frequency itself: hosts stop processing
+    // around OnReset, and the first call finds voices already idle.)
+    const bool retargeted = (output_frequency != 0) && (output_frequency != frequency);
 
     output_frequency = frequency;
-    output_size_para = base_para * freq_ratio;
-    uint32_t buffer_size = base_buf * freq_ratio;
-    
-    //if (frequency == 11025) {
-    //    output_frequency = 11025;
-    //    output_size_para = 64;
-    //    buffer_size = 4096;
-    //} else if (frequency == 44100) {
-    //    output_frequency = 44100;
-    //    output_size_para = 256;
-    //    buffer_size = 16384;
-    //} else if (frequency == 22050) {
-    //    output_frequency = 22050;
-    //    output_size_para = 128;
-    //    buffer_size = 8192;
-    //} else if (frequency == 16538) {
-    //    output_frequency = 16538;
-    //    output_size_para = 96;
-    //    buffer_size = 8000;
-    //} else if (frequency == 48000) {
-    //    output_frequency = 48000;
-    //    output_size_para = 384;
-    //    buffer_size = 16384;
-    //} else {
-    if (frequency < 8000 || frequency > 88200) { // TODO need to scale fixed buffer size
-        return false;
+    output_size_para = (int32_t)(base_para * freq_ratio + 0.5);
+    phase_interval = base_para * freq_ratio;
+    // Legacy ring buffer (VLSG_Buffer): 16 slots, each holding output_size_para stereo
+    // frames (slot stride = osp*16 bytes) => total capacity osp*256 BYTES == osp*128
+    // int16 samples. Derived from output_size_para so wav_buffer always fits the slot
+    // layout exactly at whatever rate the host requests (at 44.1kHz this is the same
+    // 32768-int16 window the original '& 0x7FFF' consumer assumed).
+    output_buffer_size_samples = 128u * (uint32_t) output_size_para;   // int16 elements
+    output_buffer_size_bytes = 2u * output_buffer_size_samples;
+
+    static const int base_delays[RVD_NUM] =
+    {
+        500, 501, 826, 827, 1038, 1039, 1176, 1177, 1178, 1179, 1339,
+        3177, 3178, 3179, 3180, 3335, 5118
+    };
+
+    for (int i = 0; i < RVD_NUM; i++)
+    {
+        reverb_delay[i] = (int)(base_delays[i] * freq_ratio + 0.5);
     }
 
-    output_buffer_size_samples = buffer_size;
-    output_buffer_size_bytes = 4 * buffer_size;
     InitializeReverbBuffer();
+
+    if (retargeted)
+    {
+        for (int i = 0; i < MAX_VOICES; i++)
+            voice_data[i].note_number = 255;   // idle sentinel (see InitializeStructures)
+    }
     return true;
 }
 
@@ -429,6 +448,13 @@ bool VLSG::VLSG_SetVelocityFunc(unsigned int curveIdx)
     
     velocity_func = curveIdx;
     return true;
+}
+
+VLSG::~VLSG()
+{
+    delete[] reverb_data_buffer;
+    reverb_data_buffer = nullptr;
+    reverb_data_ptr = nullptr;
 }
 
 bool VLSG::VLSG_PlaybackStart(void)
@@ -616,8 +642,11 @@ int32_t VLSG::VLSG_BufferVst(uint32_t output_buffer_counter, double** output, in
     //}
     ///////////////////////////////////////////////////////////////////////////////////////
     
-    // Do not progress envelope phase until after output_size_para frames (as per original hardcoded BS)
-    if (phaseAcc == INT_MIN || phaseAcc >= output_size_para) {
+    // Envelope phase steps fire every phase_interval samples - an exact fractional
+    // interval (host rate * 64 / 11025) so the envelope/LFO cadence is identical at
+    // any host sample rate, not just the rates the old integer chunk sizes matched.
+    // Do not progress envelope phase until then (as per original hardcoded BS)
+    if (phase_acc < 0.0 || phase_acc >= phase_interval) {
       while (!mSysExQueue.Empty()) {
         auto msg = mSysExQueue.Peek();
         if (msg.mOffset > offset1) break; // assume chronological order
@@ -634,9 +663,13 @@ int32_t VLSG::VLSG_BufferVst(uint32_t output_buffer_counter, double** output, in
         mMidiQueue.Remove();
       }
       ProcessPhase();
-      phaseAcc = (phaseAcc < quant) ? 0 : (phaseAcc - output_size_para);
+      if (phase_acc < 0.0) {
+        phase_acc = 0.0; // first block: start the cadence from scratch
+      } else {
+        phase_acc -= phase_interval;
+      }
     }
-    phaseAcc += quant;
+    phase_acc += quant;
     
     GenerateOutputDataVst(output, offset1, offset1 + quant);
     offset1 += quant;
@@ -672,25 +705,10 @@ void VLSG::voice_set_freq(Voice_Data *voice_data_ptr, int32_t pitch)
     value1 = (((int32_t)(channel_ptr->pitch_bend * channel_ptr->pitch_bend_sense)) >> 13) + pitch + channel_ptr->fine_tune + 2180;
     value2 = dword_C0032188[216 + (value1 >> 8)] * dword_C0032588[value1 & 0xFF];
 
-    voice_data_ptr->v_freq = value2;
-    //switch (output_frequency)
-    //{
-        //case 11025:
-        //    voice_data_ptr->v_freq = value2 >> 17;
-        //    break;
-        //case 22050:
-        //    voice_data_ptr->v_freq = value2 >> 18;
-        //    break;
-        //case 44100:
-        //    voice_data_ptr->v_freq = value2 >> 19;
-        //    break;
-        //case 16538:
-        //    voice_data_ptr->v_freq = (value2 / 3) >> 16;
-        //    break;
-        //default:
-            voice_data_ptr->v_freq = (uint32_t)((value2 >> 17) * 11025) / output_frequency;
-        //    break;
-    //}
+    // Per-sample phase increment, generalised for any output frequency. Equivalent to
+    // (value2 >> 17) * 11025 / output_frequency but with 64-bit intermediate math so no
+    // precision is lost at rates that don't divide evenly (exact at 11025/22050/44100).
+    voice_data_ptr->v_freq = (uint32_t)(((uint64_t)value2 * 11025ULL) / (((uint64_t)output_frequency) << 17));
 }
 
 int32_t VLSG::voice_get_index(Voice_Data *voice_data_ptr, int32_t pitch)
@@ -1096,6 +1114,7 @@ void VLSG::ReduceActiveVoices(int32_t maximum_voices)
         }
 
         CountActiveVoices();
+        active_voices = current_polyphony;   // seed the count (was read uninitialized - C4700)
 
         index3 = index2;
         do
@@ -1944,13 +1963,49 @@ void VLSG::SystemExclusive(void)
 
 bool VLSG::InitializeReverbBuffer(void)
 {
-    reverb_data_ptr = reverb_data_buffer;
+    // Size the circular reverb buffer for the current (sample-rate scaled) delays.
+    // The original driver used a fixed 32768-entry buffer for a max tap of 5118
+    // samples at 11025 Hz (~6.4x headroom). Scale that headroom with the same rate
+    // ratio so reverb time and loop proportions stay identical at any sample rate,
+    // rounded up to a power of two so the index mask trick keeps working.
+    uint32_t max_delay = 0;
+    for (int i = 0; i < RVD_NUM; i++)
+    {
+        if ((uint32_t)reverb_delay[i] > max_delay)
+            max_delay = (uint32_t)reverb_delay[i];
+    }
+
+    uint32_t size = 32768;
+    while (size < max_delay * 6)
+        size <<= 1;
+
+    // Only reallocate when there's no buffer yet or the rate (and hence size) changed,
+    // so VLSG_SetFrequency during normal playback is cheap. Allocate-new-then-swap-
+    // then-delete-old keeps reverb_data_ptr valid for any reader during a live rate change.
+    if (reverb_data_buffer != nullptr && reverb_data_size == size)
+        return true;
+
+    int32_t* new_buf = new (std::nothrow) int32_t[size];
+    if (new_buf == nullptr)
+        return false;
+
+    memset(new_buf, 0, size * sizeof(int32_t));
+    reverb_data_size = size;
+    reverb_data_mask = size - 1;
+
+    int32_t* old_buf = reverb_data_buffer;
+    reverb_data_buffer = new_buf;
+    reverb_data_ptr = new_buf;   // atomic-ish handoff for a concurrent reader
     reverb_data_index = 0;
+
+    delete[] old_buf;            // free the previous buffer (may be null)
     return true;
 }
 
 bool VLSG::DeinitializeReverbBuffer(void)
 {
+    delete[] reverb_data_buffer;
+    reverb_data_buffer = nullptr;
     reverb_data_ptr = nullptr;
     return true;
 }
@@ -1963,11 +2018,14 @@ void VLSG::EnableReverb(void)
 void VLSG::DisableReverb(void)
 {
     is_reverb_enabled = 0;
+    if (reverb_data_buffer != nullptr)
+    {
 #ifdef _MSC_VER
-    __stosd((unsigned long*)reverb_data_buffer, 0, sizeof(reverb_data_buffer) / 4);
+        __stosd((unsigned long*)reverb_data_buffer, 0, reverb_data_size);
 #else
-    memset(reverb_data_buffer, 0, sizeof(reverb_data_buffer));
+        memset(reverb_data_buffer, 0, reverb_data_size * sizeof(int32_t));
 #endif
+    }
 }
 
 void VLSG::SetReverbShift(uint32_t shift)
@@ -2131,36 +2189,36 @@ inline void VLSG::GenerateOutputDataVst(double **output_ptr, uint32_t offset1, u
     {
       reverb_value1 = (left + right) >> 3;
 
-      reverb_value2 = reverb_data_ptr[reverb_data_index & 0x7FFF];
-      reverb_data_ptr[(reverb_data_index + 500) & 0x7FFF] = reverb_value1 - (reverb_value2 >> 1);
+      reverb_value2 = reverb_data_ptr[reverb_data_index & reverb_data_mask];
+      reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_500]) & reverb_data_mask] = reverb_value1 - (reverb_value2 >> 1);
       reverb_value1 = (reverb_value1 >> 1) + reverb_value2;
 
-      reverb_value2 = reverb_data_ptr[(reverb_data_index + 501) & 0x7FFF];
-      reverb_data_ptr[(reverb_data_index + 826) & 0x7FFF] = reverb_value1 - (reverb_value2 >> 1);
+      reverb_value2 = reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_501]) & reverb_data_mask];
+      reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_826]) & reverb_data_mask] = reverb_value1 - (reverb_value2 >> 1);
       reverb_value1 = (reverb_value1 >> 1) + reverb_value2;
 
-      reverb_value2 = reverb_data_ptr[(reverb_data_index + 827) & 0x7FFF];
-      reverb_data_ptr[(reverb_data_index + 1038) & 0x7FFF] = reverb_value1 - (reverb_value2 >> 1);
+      reverb_value2 = reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_827]) & reverb_data_mask];
+      reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_1038]) & reverb_data_mask] = reverb_value1 - (reverb_value2 >> 1);
       reverb_value1 = (reverb_value1 >> 1) + reverb_value2;
 
-      reverb_value2 = reverb_data_ptr[(reverb_data_index + 1039) & 0x7FFF];
-      reverb_data_ptr[(reverb_data_index + 1176) & 0x7FFF] = reverb_value1 - (reverb_value2 >> 1);
+      reverb_value2 = reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_1039]) & reverb_data_mask];
+      reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_1176]) & reverb_data_mask] = reverb_value1 - (reverb_value2 >> 1);
       reverb_value1 = (reverb_value1 >> 1) + reverb_value2;
 
       reverb_value3 = reverb_value1 >> 1;
 
-      reverb_value4 = reverb_data_ptr[(reverb_data_index + 1177) & 0x7FFF] - ((96 * reverb_data_ptr[(reverb_data_index + 1179) & 0x7FFF]) >> 8);
-      reverb_data_ptr[(reverb_data_index + 1178) & 0x7FFF] = reverb_value4 >> 3;
-      reverb_data_ptr[(reverb_data_index + 3177) & 0x7FFF] = reverb_value4 + reverb_value3;
+      reverb_value4 = reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_1177]) & reverb_data_mask] - ((96 * reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_1179]) & reverb_data_mask]) >> 8);
+      reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_1178]) & reverb_data_mask] = reverb_value4 >> 3;
+      reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_3177]) & reverb_data_mask] = reverb_value4 + reverb_value3;
 
-      reverb_value4 = reverb_data_ptr[(reverb_data_index + 3178) & 0x7FFF] - ((97 * reverb_data_ptr[(reverb_data_index + 3180) & 0x7FFF]) >> 8);
-      reverb_data_ptr[(reverb_data_index + 3179) & 0x7FFF] = reverb_value4 >> 3;
-      reverb_data_ptr[(reverb_data_index + 5118) & 0x7FFF] = reverb_value4 + reverb_value3;
+      reverb_value4 = reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_3178]) & reverb_data_mask] - ((97 * reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_3180]) & reverb_data_mask]) >> 8);
+      reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_3179]) & reverb_data_mask] = reverb_value4 >> 3;
+      reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_5118]) & reverb_data_mask] = reverb_value4 + reverb_value3;
 
-      left += (reverb_data_ptr[(reverb_data_index + 1179) & 0x7FFF] + reverb_data_ptr[(reverb_data_index + 3335) & 0x7FFF]) >> reverb_shift;
-      right += (reverb_data_ptr[(reverb_data_index + 1339) & 0x7FFF] + reverb_data_ptr[(reverb_data_index + 3180) & 0x7FFF]) >> reverb_shift;
+      left += (reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_1179]) & reverb_data_mask] + reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_3335]) & reverb_data_mask]) >> reverb_shift;
+      right += (reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_1339]) & reverb_data_mask] + reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_3180]) & reverb_data_mask]) >> reverb_shift;
 
-      reverb_data_index = (reverb_data_index + 1) & 0x7FFF;
+      reverb_data_index = (reverb_data_index + 1) & reverb_data_mask;
     }
     
     // Floating point supports going beyond clipping so F IT.
@@ -2311,36 +2369,36 @@ void VLSG::GenerateOutputData(uint8_t *output_ptr, uint32_t offset1, uint32_t of
         {
             reverb_value1 = (left + right) >> 3;
 
-            reverb_value2 = reverb_data_ptr[reverb_data_index & 0x7FFF];
-            reverb_data_ptr[(reverb_data_index + 500) & 0x7FFF] = reverb_value1 - (reverb_value2 >> 1);
+            reverb_value2 = reverb_data_ptr[reverb_data_index & reverb_data_mask];
+            reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_500]) & reverb_data_mask] = reverb_value1 - (reverb_value2 >> 1);
             reverb_value1 = (reverb_value1 >> 1) + reverb_value2;
 
-            reverb_value2 = reverb_data_ptr[(reverb_data_index + 501) & 0x7FFF];
-            reverb_data_ptr[(reverb_data_index + 826) & 0x7FFF] = reverb_value1 - (reverb_value2 >> 1);
+            reverb_value2 = reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_501]) & reverb_data_mask];
+            reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_826]) & reverb_data_mask] = reverb_value1 - (reverb_value2 >> 1);
             reverb_value1 = (reverb_value1 >> 1) + reverb_value2;
 
-            reverb_value2 = reverb_data_ptr[(reverb_data_index + 827) & 0x7FFF];
-            reverb_data_ptr[(reverb_data_index + 1038) & 0x7FFF] = reverb_value1 - (reverb_value2 >> 1);
+            reverb_value2 = reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_827]) & reverb_data_mask];
+            reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_1038]) & reverb_data_mask] = reverb_value1 - (reverb_value2 >> 1);
             reverb_value1 = (reverb_value1 >> 1) + reverb_value2;
 
-            reverb_value2 = reverb_data_ptr[(reverb_data_index + 1039) & 0x7FFF];
-            reverb_data_ptr[(reverb_data_index + 1176) & 0x7FFF] = reverb_value1 - (reverb_value2 >> 1);
+            reverb_value2 = reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_1039]) & reverb_data_mask];
+            reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_1176]) & reverb_data_mask] = reverb_value1 - (reverb_value2 >> 1);
             reverb_value1 = (reverb_value1 >> 1) + reverb_value2;
 
             reverb_value3 = reverb_value1 >> 1;
 
-            reverb_value4 = reverb_data_ptr[(reverb_data_index + 1177) & 0x7FFF] - ((96 * reverb_data_ptr[(reverb_data_index + 1179) & 0x7FFF]) >> 8);
-            reverb_data_ptr[(reverb_data_index + 1178) & 0x7FFF] = reverb_value4 >> 3;
-            reverb_data_ptr[(reverb_data_index + 3177) & 0x7FFF] = reverb_value4 + reverb_value3;
+            reverb_value4 = reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_1177]) & reverb_data_mask] - ((96 * reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_1179]) & reverb_data_mask]) >> 8);
+            reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_1178]) & reverb_data_mask] = reverb_value4 >> 3;
+            reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_3177]) & reverb_data_mask] = reverb_value4 + reverb_value3;
 
-            reverb_value4 = reverb_data_ptr[(reverb_data_index + 3178) & 0x7FFF] - ((97 * reverb_data_ptr[(reverb_data_index + 3180) & 0x7FFF]) >> 8);
-            reverb_data_ptr[(reverb_data_index + 3179) & 0x7FFF] = reverb_value4 >> 3;
-            reverb_data_ptr[(reverb_data_index + 5118) & 0x7FFF] = reverb_value4 + reverb_value3;
+            reverb_value4 = reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_3178]) & reverb_data_mask] - ((97 * reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_3180]) & reverb_data_mask]) >> 8);
+            reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_3179]) & reverb_data_mask] = reverb_value4 >> 3;
+            reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_5118]) & reverb_data_mask] = reverb_value4 + reverb_value3;
 
-            left += (reverb_data_ptr[(reverb_data_index + 1179) & 0x7FFF] + reverb_data_ptr[(reverb_data_index + 3335) & 0x7FFF]) >> reverb_shift;
-            right += (reverb_data_ptr[(reverb_data_index + 1339) & 0x7FFF] + reverb_data_ptr[(reverb_data_index + 3180) & 0x7FFF]) >> reverb_shift;
+            left += (reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_1179]) & reverb_data_mask] + reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_3335]) & reverb_data_mask]) >> reverb_shift;
+            right += (reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_1339]) & reverb_data_mask] + reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_3180]) & reverb_data_mask]) >> reverb_shift;
 
-            reverb_data_index = (reverb_data_index + 1) & 0x7FFF;
+            reverb_data_index = (reverb_data_index + 1) & reverb_data_mask;
         }
 
         if (left > 32767)

@@ -136,6 +136,18 @@ Phase 1 additions (2026-09-15, pin `d54f69050`):
    `find_package(iPlug2)` / `add_subdirectory` instead of hand-writing `sources_core.cmake` — likely a big scope cut,
    but verify /MT, `_xp`-era flags and our deploy hooks are expressible before switching.
 
+9. **`IVKeyboardControl::TriggerMidiMsgFromKeyPress` made `virtual` + `protected`**
+   (`iPlug2/IGraphics/Controls/IVKeyboardControl.h`, 2026-10 — **the only iPlug2 *source* edit**, `m iPlug2` dirty):
+   the multi-channel UI needs a keyboard that transmits on the currently-selected MIDI channel, but upstream hardcodes
+   `MakeNoteOnMsg(nn, vel, 0)` (channel defaults to 0) with no delegate hook to remap it. Marking the one method that
+   emits note on/off messages `virtual` lets a superproject subclass (`ChannelKeyboardControl`) override just that
+   method and pass `*mpSelectedChannel` — zero behaviour change for every other consumer (signature + default body
+   byte-identical). `IWheelControl` needed no edit: its channel-hardcoded emit lives in an action lambda we already
+   replace via `SetActionFunction` (`ChannelWheelControl`). This is upstreamable (a strict API extension) — if the
+   submodule working tree is ever reset, re-apply by adding `virtual` to that method and moving it to a `protected:`
+   section. Re-applied/verified with this session's MSVC x64+Win32 builds (§8b). If submitting upstream, send a PR
+   against `master`; until merged it is lost on submodule checkout like the items above.
+
 ## 4. Phase 1 — iPlug2 update (DONE 2026-09-15)
 
 - [x] `git -C iPlug2 fetch origin && git checkout <tip>` → **`d54f69050f517e43b941d88c2a170f0a840b9ee4`** (2026-08-19,
@@ -443,8 +455,50 @@ output; load-harness pass = module loads, entry points respond, ROM found next t
       `if-no-files-found: error` would fail the upload).
 
 ### Remaining open items (not Phase 5 blockers)
-- **Sound / interactive-host (REAPER) verification** — deferred (no REAPER on the box); Phase 4 harness proves load
-  + entry-point wiring only.
+- ~~Sound / interactive-host verification~~ — **verified interactively by user 2026-10-11** (VST2 in real host
+  works incl. audio; APP UI play-tested). Phase 4 harness remains for load/entry-point wiring only on CI.
+- **`loadtest.ps1` pwsh harness quirk (VST2 case):** since the multi-channel-UI rebuild, `TestVst2` AVs
+  (0xC0000005) *only under pwsh*, twice reproduced; an identical standalone P/Invoke sequence
+  (VSTPluginMain→effOpen→effSetSampleRate→effSetBlockSize→effClose) passes every step, and the plugin is
+  confirmed working in a real host. Treated as harness-environment-only; not chased further per user (2026-10-11).
+  Win32 case unaffected; CI runs the c-cmd harness path unchanged.
+
+## 8b. Host sample-rate generalisation + 16-channel UI (2026-10-11)
+
+Synth must follow the host's sample rate everywhere; UI rebuilt as a 16-channel MIDI-keyboard-style panel.
+
+**VLSG engine (`VLSG.h/.cpp`)** — everything time-based derives from the 11025 Hz / 64-sample reference:
+- `VLSG_SetFrequency(freq)` accepts any host rate (clamped 4k–192k): `output_size_para` and the new
+  fractional `phase_interval` (with `double phase_acc`, `-1` = fire-first sentinel) keep envelope/LFO cadence
+  rate-independent; `voice_set_freq` computes the phase increment with 64-bit math off `output_frequency`.
+- Reverb: delay taps scale by `freq_ratio` via the `RVD_*` enum (was scattered literals valid only near base
+  rate); ring buffer dynamically sized `pow2(≥6×max tap)` (32768 at 11025 — identical to original),
+  allocate-new→swap→delete-old handoff, `reverb_data_mask` replaces all `& 0x7FFF`, freed in dtor.
+- Mid-session rate change silences sounding voices (stale increments ⇒ wrong pitch until retriggered).
+- Legacy ring geometry exported for the host layer: `GetLegacyChunkSamples()` (=4·output_size_para frames),
+  `GetOutputBufferSamples/Bytes()` (ring = 128·osp int16s; matches the old `&32767` consumer at 44.1k).
+
+**Plug layer (`SW10_PLUG.h/.cpp`, `config.h`)**:
+- Sample-rate *parameter* removed; `OnReset()` pushes `GetSampleRate()` into the engine, grows/re-registers
+  `wav_buffer` (nothrow), resets render bookkeeping (`mRenderedFramesQueued/mRenderReadPos` members replace
+  function-local statics; mode-2 loop now rate-aware, `% ringSamples` — no more hardcoded 1024/32768).
+- Per-channel mirror `mChannelUi[16]` updated in `ProcessMidiMsg` (both render modes, benign-race ints),
+  pushed to the UI only from `OnIdle` (`SendControlValueFromDelegate` + `kMsgTagProgramName` strings to the
+  new `MenuTextControl`). Audio-thread `printf` spam and direct label writes from ProcessBlock removed
+  (poly now `std::atomic<int>` → debounced labels in OnIdle).
+- Layout (keyboard-style, 1024×520): full-width channel tabs; program caption dropdown (GM1 names / drum kits,
+  `MakeProgramChange` — self-fed back via `mMidiMsgsFromEditor`, confirmed for all four targets); Vol/Pan/Expr/Mod
+  faders (CC7/10/11/1 on selected channel); Voices + host-SR readouts; right dB-meter column; octave bar
+  `< C2–C7 >` (−3…+2, `SetNoteRange`); **Bend|Mod wheels side-by-side left of the keys** (user-requested,
+  matches original). Channel-aware transmit: `ChannelKeyboardControl` overrides the newly-virtual
+  `TriggerMidiMsgFromKeyPress` (submodule edit, §3b item 9); `ChannelWheelControl` swaps
+  `IWheelControl`'s action lambda. RPN bend-range now targets the selected channel (`SendPitchBendRPN`).
+- **HiDPI gotcha (costly lesson):** with `GetScaleForScreen` scaling on 4K, `GetBounds()` is device px — every
+  layout constant goes through `S(v)=v·(bounds.W()/1024)`. And `IRECT::GetGridCell(cellIndex, nRows, nColumns)`
+  — passing row-major args or `nRows=0` yields degenerate/stacked cells (the "knobs pile up" symptom).
+
+**Builds/verification**: x64 + Win32 Release all four targets green (MSVC 18.10); APP window smoke both archs
+(natural-size screenshots, wheels-left layout confirmed); user-verified VST2 with audio in real host.
 - **XP floor**: `-xp` presets present but inert until the `v141_xp` toolset + Win7.1A SDK are installed (or clang-cl
   Plan B). Win7 x86 is the pragmatic floor today (NanoVG/GL2, static CRT).
 - **Skia backend**: still selectable but Windows upstream lib layout diverges from our deps zip; untested at link.

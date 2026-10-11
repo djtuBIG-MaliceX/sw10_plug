@@ -43,6 +43,22 @@
 #define DRUM_CHANNEL 9
 #define MAX_VOICES 256  // hehehe
 
+// Base reverb delays in samples at the 11025 Hz reference rate of the original driver.
+// They are scaled to the actual output frequency in VLSG_SetFrequency so the reverb
+// time stays constant at any host sample rate.
+enum ReverbDelayIdx
+{
+  RVD_500 = 0, RVD_501,
+  RVD_826, RVD_827,
+  RVD_1038, RVD_1039,
+  RVD_1176, RVD_1177, RVD_1178, RVD_1179,
+  RVD_1339,
+  RVD_3177, RVD_3178, RVD_3179, RVD_3180,
+  RVD_3335,
+  RVD_5118,
+  RVD_NUM
+};
+
 
 typedef struct
 {
@@ -198,12 +214,26 @@ public:
   inline void ProcessSysExDataVst(iplug::ISysEx& msg);    // TODO adapt for pluggable queue
   void ProcessPhase(void);
 
+  // Read-only channel state for UI mirroring (program, volume, pan, expression, ...)
+  const Channel_Data* GetChannelData(int channel) const { return &(channel_data[channel & (MIDI_CHANNELS - 1)]); }
+  // Frames rendered per VLSG_Buffer() call (legacy "Original Driver" render mode)
+  int GetLegacyChunkSamples(void) const { return 4 * output_size_para; }
+  // Legacy ring buffer capacity in frames / bytes
+  uint32_t GetOutputBufferSamples(void) const { return output_buffer_size_samples; }
+  uint32_t GetOutputBufferBytes(void) const { return output_buffer_size_bytes; }
+
+  ~VLSG();
+
 private:
   uint32_t dword_C0000000;
   uint32_t dword_C0000004;
   uint32_t dword_C0000008;
   int32_t output_size_para;
-  int phaseAcc = INT_MIN;
+  // Envelope/phase scheduler: ProcessPhase() runs every phase_interval samples (fractional,
+  // exact) so envelope & LFO rates are identical at any host sample rate. Reference rate is
+  // the original driver's 11025 Hz / 64-sample quantum = 172.2685... steps per second.
+  double phase_interval = 64.0;
+  double phase_acc = -1.0;   // < 0 means "fire on first sample of the first block"
   uint32_t system_time_2;
   uint8_t event_data[256];
   uint32_t recent_voice_index;
@@ -211,7 +241,10 @@ private:
   Channel_Data* channel_data_ptr;
   uint32_t event_type;
   int32_t event_length = 0;
-  int32_t reverb_data_buffer[32768];
+  int32_t* reverb_data_buffer = nullptr; // dynamically sized (scales with sample rate)
+  uint32_t reverb_data_size = 0;
+  uint32_t reverb_data_mask = 0x7FFF;
+  int reverb_delay[RVD_NUM];             // delays scaled to output_frequency
   uint32_t reverb_data_index;
   int32_t is_reverb_enabled;
   uint32_t reverb_shift;
