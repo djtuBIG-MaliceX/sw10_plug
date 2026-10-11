@@ -550,6 +550,52 @@ harness-only quirk, plugin unaffected: real hosts + prior standalone probe fine)
 title set = ROM loaded, heartbeat drawing). Dropdown/flash/meter-follow behaviour need a quick interactive REAPER pass;
 not automatable here (no DAW installed).
 
+## 8d. Dropdown root-cause fixes + drum kits + pump/wheel/vel-curve (2026-10-11)
+
+Follow-up to §8c after continued user testing: GM dropdown STILL inert on click (even in the APP), drum-kit list had
+placeholder names + selections that did nothing. Then per-request: wheel follows host bend, tab flash survives without
+hover, velocity-curve graph. **Zero iPlug2 edits** (a temporary diagnostic log inside `IGraphics::OnMouseDown` was used
+to capture evidence and reverted; submodule porcelain verified clean before commit).
+
+- **Paint-pump hardening (`IGRAPHICS_DISABLE_VSYNC`):** the Win8+ vsync path ticks via a vsync thread whose
+  `WM_VBLANK` handler *silently drops* late ticks in busy hosts, freezing the §8c heartbeat (root cause of
+  hover-only tab flashes). Compiling the targets with `IGRAPHICS_DISABLE_VSYNC` swaps to the hwnd-bound WM_TIMER pump.
+  Safe: on Windows NanoVG, `IGraphicsWin.cpp` unity-compiles *inside* our plugin targets (INTERFACE-imported sources),
+  so target-level PRIVATE defines reach it (verified via generated vcxproj). Added in `SW10_PLUG/CMakeLists.txt`
+  (`sw10_common_setup`) + `config/SW10_PLUG-win.props` `EXTRA_ALL_DEFS` (sln-fallback parity). Tab flash also got a
+  self-sustaining `SetAnimation` while flashing (dirty rects are per-control; the heart's zero rect alone didn't
+  repaint the strip).
+- **THE dropdown bug (`ITextControl` ignore-mouse):** this pin's `GetMouseControlIdx` skips controls with
+  `GetIgnoreMouse()`, and **every `ITextControl` sets `mIgnoreMouse = true` by default** (passive labels must not eat
+  clicks). `MenuTextControl : ITextControl` therefore never received a real click: temporary instrumentation proved the
+  WndProc delivered exact client coords yet resolution returned null (`OnMouseDown x=158 y=124 -> tag=-999`) while a
+  raw `IsHit()` dump said hit=1 (it bypasses the skip-check). Fix: constructor calls `SetIgnoreMouse(false)` **only
+  when a click handler exists**. This — not foreground (§8c) or menu columns — was the blocker; all layers now in
+  place: `SetForegroundWindow` (host focus) + `SetNItemsPerColumn(32)` (128-item single column exceeds work area;
+  upstream splits with MF_MENUBARBREAK under 160 items) + clickable hit-test. Verified: native `#32768` popup appears
+  from the automated click probe (GM 128 items / drums 8, `fails=0`).
+- **Drum-channel GM2 kit correctness:** engine matches drum-channel PC against `drum_kits[] = {0,8,16,24,25,32,40,48}`
+  (GS/GM2 kit numbers 1/9/../49 **minus 1**, MMA/GM2 "Drum sounds" table) and *ignores every other PC* — so the old
+  UI menu (a) showed placeholder names, (b) sent bare indices 1-7 which the engine silently dropped (only "Standard"
+  ever worked), and (c) `program & 7` mis-mapped kit PCs (`25&7=1`). Now: official names
+  (Standard/Room/Power/Electronic/TR-808/Jazz/Brush/Orchestra Kit), menu sends `GetVLSGDrumKitPC(row)` (new accessor
+  in VLSG.cpp/.h — single source of truth, mirrors the engine table), `UpdateChannelUiState` ignores non-kit drum PCs
+  on ch-10 exactly like the engine, caption round-trips via `DrumKitIdxFromPC`. End-to-end verified: probe clicked
+  native-menu row 3 → caption repaints "Power Kit" (PC 16).
+- **Wheel follow + bender menu removal:** audio thread mirrors per-channel pitch into `ChannelUiState::pitch`;
+  `UITick` diffs vs `mSentBend/mSentMod` and re-dispatches via `SendMidiMsgFromDelegate` so upstream
+  `IWheelControl::OnMidi` moves wheels from host traffic; channel switch resets sentinels. `ChannelWheelControl`
+  right-click menu deleted (single source of bend range = P.Bend Rng param); caption shows "Bend ±N".
+- **Vel. Curve graph:** `VelocityCurveControl` (tag `kCtrlTagVelCurve`) beside the knob plots the engine's real
+  table through new accessor `GetVLSGVelocityCurve(idx)` → `velocity_curves[idx+1]` (128×0..127); redraws from
+  `OnParamChangeUI`.
+- **Startup-crash lesson (`0xC0000409`):** a control bound `kNoParameter` must never call `GetParam()` — the vel-curve
+  control now binds its param in the ctor (no-op mouse handlers; it is display-only).
+
+**Verified**: x64 + Win32 Release all 4 targets green; click probe GM/drum menus SHOWN `fails=0` + Power-Kit selection
+screenshot; VST3+CLAP entry probes PASS; APP smoke. Diagnostics fully removed (plugin grep clean, submodule porcelain
+clean).
+
 ## 9. Risks
 
 | Risk | Likelihood | Mitigation |

@@ -43,6 +43,13 @@ function(sw10_common_setup target)
     WIN32
     _CRT_SECURE_NO_DEPRECATE
     _CRT_NONSTDC_NO_DEPRECATE
+    # Paint pump: upstream's Win8+ vsync-thread path silently drops WM_VBLANK ticks in
+    # hosts whose UI thread is busy (OnDisplayTimer discards "late" frames), freezing
+    # meter/tab animation until the mouse moves. WM_TIMER (hWnd-bound, 15ms) on the
+    # plug window's own message loop is strictly more reliable. IGraphicsWin.cpp
+    # unity-compiles inside these targets (Windows NanoVG INTERFACE sources), so a
+    # target-level define reaches the guard in its ctor — no submodule edit.
+    IGRAPHICS_DISABLE_VSYNC
   )
   target_link_libraries(${target} PUBLIC iPlug2::Extras::Synth ${IGRAPHICS_LIB})
   set_property(TARGET ${target} PROPERTY FOLDER "sw10")

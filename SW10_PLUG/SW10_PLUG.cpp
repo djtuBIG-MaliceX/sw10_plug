@@ -90,13 +90,23 @@ const char* kGMProgramNames[128] = {
   "Telephone Ring",         "Helicopter",             "Applause",               "Gunshot"
 };
 
-// The GM spec names no drum kits; the SW-10 ROM carries kit banks right after the
-// melodic set (programs 128+). These are UI labels for those kit banks; on the drum
-// channel a program change selects the kit rather than an instrument.
+// The SW-10 engine accepts only these PC numbers on the drum channel (drum_kits[] in
+// VLSG.cpp; everything else is ignored). They are the GS/GM2 standard kit numbers
+// 1/9/17/25/26/33/41/49 minus 1, so the official names per GM2 spec ("Drum sounds"
+// table) for kit index 0-7 are below. Menu clicks must send the PC *number*, not the
+// menu index — see GetVLSGDrumKitPC().
 const char* kDrumKitNames[8] = {
-  "Standard Kit", "Room Kit",      "Power Kit",   "Orchestra Kit",
-  "Kit 5",        "Kit 6",         "Kit 7",       "Kit 8",
+  "Standard Kit",   "Room Kit",     "Power Kit",    "Electronic Kit",
+  "TR-808 Kit",     "Jazz Kit",     "Brush Kit",    "Orchestra Kit",
 };
+
+// Maps a drum-channel PC number back to the kit index / menu position; -1 if the engine
+// would ignore that PC (keep showing the previously selected kit then).
+static int DrumKitIdxFromPC(int pc)
+{
+  for (int i = 0; i < 8; i++) { if (GetVLSGDrumKitPC(i) == pc) return i; }
+  return -1;
+}
 
 static const char* kChannelOptionLabels[16] = {
   "1", "2", "3", "4", "5", "6", "7", "8",
@@ -118,7 +128,13 @@ public:
   : ITextControl(bounds, str, text)
   , mOnClick(onClick)
   , mDrawFrame(drawFrame)
-  {}
+  {
+    // ITextControl sets mIgnoreMouse = true (upstream default: passive labels must not
+    // trap clicks meant for controls beneath them). A dropdown caption has to be
+    // hit-testable in IGraphics::GetMouseControlIdx, which skips ignore-mouse controls,
+    // so opt back in — but only for instances that actually have a click handler.
+    if (mOnClick) { SetIgnoreMouse(false); }
+  }
 
   void Draw(IGraphics& g) override
   {
@@ -259,6 +275,13 @@ public:
         for (int ch = 0; ch < MIDI_CHANNELS && ch < 32; ch++) {
           if (mask & (1u << ch)) mFlashUntil[ch] = now + kFlashMs;
         }
+        // Self-sustaining animation for the fade window: an animating control dirties
+        // its own rect every flush tick, so the tint animates and clears even in hosts
+        // where nothing else repaints this strip (no mouse, throttled display pump).
+        SetAnimation([](IControl* pCaller) {
+          pCaller->SetDirty(false);
+          if (pCaller->GetAnimationProgress() >= 1.0) pCaller->OnEndAnimation();
+        }, kFlashMs);
       }
     }
     IVTabSwitchControl::OnMsgFromDelegate(msgTag, dataSize, pData);
@@ -290,6 +313,57 @@ public:
 private:
   int mDrawIdx = 0;
   unsigned long long mFlashUntil[MIDI_CHANNELS] = {};
+};
+
+// -----------------------------------------------------------------------------
+/** Small framed box that plots the engine's actual velocity response table for the
+    current Vel. Curve parameter (0-11). Redrawn via OnParamChangeUI -> SetDirty. */
+class VelocityCurveControl : public IControl
+{
+public:
+  explicit VelocityCurveControl(const IRECT& bounds)
+  : IControl(bounds, kParamVelocityFunction)   // bound control -> GetParam() valid in Draw
+  {
+  }
+
+  void Draw(IGraphics& g) override
+  {
+    const IParam* pParam = GetParam();
+    if (!pParam && GetDelegate()) pParam = GetDelegate()->GetParam(kParamVelocityFunction);
+    if (!pParam) return;
+    const int idx = pParam->Value();
+
+    g.FillRoundRect(IColor(255, 248, 246, 240), mRECT.GetPadded(-1.f));
+    g.DrawRoundRect(COLOR_BLACK.WithOpacity(0.45f), mRECT.GetPadded(-1.f));
+
+    const IRECT plot = mRECT.GetPadded(-std::max(4.f, mRECT.H() * 0.10f));
+
+    // faint diagonal = linear reference
+    g.DrawLine(COLOR_BLACK.WithOpacity(0.15f), plot.L, plot.B, plot.R, plot.T);
+
+    const int32_t* curve = GetVLSGVelocityCurve(idx);
+    IColor line(255, 196, 88, 10);
+    float prevX = plot.L, prevY = plot.B;
+    for (int vel = 0; vel <= 127; vel += 2) {
+      const float x = plot.L + plot.W() * (vel / 127.f);
+      const float y = plot.B - plot.H() * (Clip(static_cast<float>(curve[vel]), 0.f, 127.f) / 127.f);
+      if (vel > 0) g.DrawLine(line, prevX, prevY, x, y, nullptr, 1.6f);
+      prevX = x; prevY = y;
+    }
+
+    // corner axis labels stay tiny; just ticks at mid velocities
+    g.DrawLine(COLOR_BLACK.WithOpacity(0.25f), plot.L, plot.B - plot.H() * 0.5f,
+               plot.R, plot.B - plot.H() * 0.5f);
+
+    IText lbl(std::max(9.f, mRECT.H() * 0.16f), EAlign::Center, COLOR_BLACK.WithOpacity(0.55f));
+    WDL_String t;
+    t.SetFormatted(32, "curve %d", idx);
+    g.DrawText(lbl, t.Get(), mRECT.GetReducedFromBottom(mRECT.H() * 0.30f).GetMidVPadded(-2.f));
+  }
+
+  // Display-only: parameter-bound base controls would nudge the param on click/wheel.
+  void OnMouseDown(float x, float y, const IMouseMod& mod) override {}
+  void OnMouseWheel(float x, float y, const IMouseMod& mod, float d) override {}
 };
 
 // -----------------------------------------------------------------------------
@@ -384,18 +458,28 @@ SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
         if (ch == 9) {
           for (int i = 0; i < 8; i++)
             menu.AddItem(kDrumKitNames[i]);
-          menu.SetChosenItemIdx(mChannelUi[ch].program & 7);
+          const int kit = DrumKitIdxFromPC(mChannelUi[ch].program);
+          menu.SetChosenItemIdx(kit < 0 ? 0 : kit);   // engine default = Standard
         } else {
           for (int i = 0; i < 128; i++)
             menu.AddItem(kGMProgramNames[i]);
+          // Split into 4 columns: a single 128-item column is taller than any work
+          // area; such TrackPopupMenu calls fail to show in some hosts. Keep well
+          // under IGraphicsWin's 160-item column-split limit by construction.
+          menu.SetNItemsPerColumn(32);
           menu.SetChosenItemIdx(mChannelUi[ch].program & 127);
         }
         menu.SetFunction([this, ch](IPopupMenu* pMenu) {
-          const int program = pMenu->GetChosenItemIdx();
-          if (program < 0) return;
+          const int sel = pMenu->GetChosenItemIdx();
+          if (sel < 0) return;
+
+          // Drum channel: PC must carry the kit *number* the engine matches against
+          // drum_kits[] (0/8/../48); a bare menu index 1-7 would be ignored there.
+          const int pc = (ch == 9) ? GetVLSGDrumKitPC(sel) : sel;
+          if (pc < 0) return;
 
           IMidiMsg msg;   // helper exists at IPlugMidi.h MakeProgramChange
-          msg.MakeProgramChange(program, ch);
+          msg.MakeProgramChange(pc, ch);
           SendMidiMsgFromUI(msg);
         });
       }, /*drawFrame*/ true);
@@ -419,14 +503,16 @@ SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
     const IRECT benderR = wheelCol.GetGridCell(0, 1, 2).GetPadded(-S(3));
     const IRECT modR    = wheelCol.GetGridCell(1, 1, 2).GetPadded(-S(3));
 
-    pGraphics->AttachControl(new MenuTextControl(benderR.GetFromTop(S(16)), "Bend",
-      IText(S(12), EAlign::Center, COLOR_BLACK), nullptr, false));
+    auto pBendLbl = new MenuTextControl(benderR.GetFromTop(S(16)), "Bend",
+      IText(S(12), EAlign::Center, COLOR_BLACK), nullptr, false);
+    bendLabel = pBendLbl;                       // UITick refreshes to "Bend ±N"
+    mShownBendRange = -1;                       // force a label refresh on next tick
+    pGraphics->AttachControl(pBendLbl);
     pGraphics->AttachControl(new MenuTextControl(modR.GetFromTop(S(16)), "Mod",
       IText(S(12), EAlign::Center, COLOR_BLACK), nullptr, false));
 
     pGraphics->AttachControl(new ChannelWheelControl(benderR.GetReducedFromTop(S(18)),
-      IMidiMsg::EControlChangeMsg::kNoCC, &mSelectedChannel, GetParam(kParamPitchBendRange)->Value()),
-      kCtrlTagBender);
+      IMidiMsg::EControlChangeMsg::kNoCC, &mSelectedChannel), kCtrlTagBender);
     pGraphics->AttachControl(new ChannelWheelControl(modR.GetReducedFromTop(S(18)),
       IMidiMsg::EControlChangeMsg::kModWheel, &mSelectedChannel), kCtrlTagModWheel);
 
@@ -440,7 +526,10 @@ SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
     pGraphics->AttachControl(new IVKnobControl(knobsR.GetGridCell(1, 1, 5).GetPadded(-S(8)), kParamReverbMode, "Reverb"), kNoTag, "Reverb")->DisablePrompt(false);
     pGraphics->AttachControl(new IVKnobControl(knobsR.GetGridCell(2, 1, 5).GetPadded(-S(8)), kParamBufferRenderMode, "Render Mode"), kNoTag, "RenderMode")->DisablePrompt(false);
     pGraphics->AttachControl(new IVKnobControl(knobsR.GetGridCell(3, 1, 5).GetPadded(-S(8)), kParamPitchBendRange, "P.Bend Rng"), kNoTag, "ADSR")->DisablePrompt(false);
-    pGraphics->AttachControl(new IVKnobControl(knobsR.GetGridCell(4, 1, 5).GetPadded(-S(8)), kParamVelocityFunction, "Vel. Curve"), kNoTag, "ADSR")->DisablePrompt(false);
+    // Last cell: narrower knob + live preview of the actual engine velocity table beside it
+    const IRECT velCell = knobsR.GetGridCell(4, 1, 5);
+    pGraphics->AttachControl(new IVKnobControl(velCell.GetReducedFromRight(S(64)).GetPadded(-S(8)), kParamVelocityFunction, "Vel. Curve"), kNoTag, "ADSR")->DisablePrompt(false);
+    pGraphics->AttachControl(new VelocityCurveControl(velCell.GetFromRight(S(60)).GetCentredInside(S(58), S(52))), kCtrlTagVelCurve);
 
     // Voices + host sample-rate readout (pushed from OnIdle, main thread only)
     const IRECT infoR = IRECT(knobRow.R - S(268), knobRow.T + S(4), knobRow.R - S(118), knobRow.B);
@@ -481,7 +570,7 @@ SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
     pGraphics->AttachControl(new IVButtonControl(kbdBar.GetReducedFromLeft(S(192)).GetFromLeft(S(30)),
       [shiftOctave](IControl*) { shiftOctave(1); }, ">", style));
 
-    pGraphics->AttachControl(new MenuTextControl(kbdBar.GetReducedFromLeft(S(240)), "Click the program name to change instrument, or right-click the bender for its range",
+    pGraphics->AttachControl(new MenuTextControl(kbdBar.GetReducedFromLeft(S(240)), "Click the program name to change instrument · P.Bend Rng sets the wheel range",
       IText(S(12), EAlign::Near, COLOR_BLACK.WithOpacity(0.6f)), nullptr, false));
 
     pGraphics->SetQwertyMidiKeyHandlerFunc([pGraphics](const IMidiMsg& msg) {
@@ -711,6 +800,33 @@ void SW10_PLUG::UITick()
     mShownRate = mSampleRateHint;
     rateIndicator->SetStrFmt(24, "SR: %d Hz", mSampleRateHint);
   }
+
+#if IPLUG_EDITOR
+  // Wheel-follow: host (or UI) MIDI for the selected channel drives the physical
+  // wheel positions. SendMidiMsgFromDelegate dispatches OnMidi to wants-MIDI controls;
+  // diffs against mSent* keep UI drag/spring animations undisturbed when nothing moved.
+  const double bend = mChannelUi[mSelectedChannel].pitch;    // benign-race mirror read
+  if (bend != mSentBend) {
+    mSentBend = bend;
+    IMidiMsg pb;
+    pb.MakePitchWheelMsg(bend, mSelectedChannel);
+    SendMidiMsgFromDelegate(pb);
+  }
+  const int mod = mChannelUi[mSelectedChannel].modulation;
+  if (mod != mSentMod) {
+    mSentMod = mod;
+    IMidiMsg cc;
+    cc.MakeControlChangeMsg(IMidiMsg::EControlChangeMsg::kModWheel, mod / 127.0, mSelectedChannel);
+    SendMidiMsgFromDelegate(cc);
+  }
+
+  // Wheel range is the P.Bend Rng param (synced from incoming RPN too) — show it.
+  const int bendRange = GetParam(kParamPitchBendRange)->Value();
+  if (bendLabel && bendRange != mShownBendRange) {
+    mShownBendRange = bendRange;
+    bendLabel->SetStrFmt(32, "Bend \xC2\xB1%d", bendRange);   // UTF-8 for '±'
+  }
+#endif
 }
 
 void SW10_PLUG::SendMidiMsgFromUI(const IMidiMsg& msg)
@@ -794,6 +910,7 @@ void SW10_PLUG::OnUIClose()
 {
   polyIndicator = nullptr;
   rateIndicator = nullptr;
+  bendLabel = nullptr;
 }
 
 void SW10_PLUG::ProcessMidiMsg(const IMidiMsg& msg)
@@ -941,22 +1058,13 @@ void SW10_PLUG::OnParamChange(int paramIdx)
 
 void SW10_PLUG::OnParamChangeUI(int paramIdx, EParamSource source)
 {
-  if (auto pGraphics = GetUI())
-  {
-    /* reserved for future per-control UI reactions */
+  if (auto pGraphics = GetUI()) {
+    if (paramIdx == kParamVelocityFunction) {
+      // Redraw the velocity-response preview with the new curve (any change source).
+      if (auto pCurve = pGraphics->GetControlWithTag(kCtrlTagVelCurve))
+        pCurve->SetDirty(false);
+    }
   }
-}
-
-bool SW10_PLUG::OnMessage(int msgTag, int ctrlTag, int dataSize, const void* pData)
-{
-  if (ctrlTag == kCtrlTagBender && msgTag == IWheelControl::kMessageTagSetPitchBendRange && pData)
-  {
-    const int bendRange = *static_cast<const int*>(pData);   // wheel sends sizeof(int)
-    SendPitchBendRPN(mSelectedChannel, bendRange);
-    return true;
-  }
-
-  return false;
 }
 
 // -----------------------------------------------------------------------------
@@ -993,8 +1101,17 @@ void SW10_PLUG::UpdateChannelUiState(const IMidiMsg& msg)
   bool touched = false;
   switch (msg.StatusMsg())
   {
-    case IMidiMsg::kProgramChange:
-      mChannelUi[ch].program = msg.Program() & 0x7F;
+    case IMidiMsg::kProgramChange: {
+      const int pc = msg.Program() & 0x7F;
+      // On the drum channel the engine silently ignores PCs outside drum_kits[]; don't
+      // let the UI claim a kit the engine will not switch to.
+      if (ch == 9 && DrumKitIdxFromPC(pc) < 0) break;
+      mChannelUi[ch].program = pc;
+      touched = true;
+      break;
+    }
+    case IMidiMsg::kPitchWheel:
+      mChannelUi[ch].pitch = msg.PitchWheel();   // -1..1, wheel follow in UITick
       touched = true;
       break;
     case IMidiMsg::kControlChange: {
@@ -1061,6 +1178,11 @@ void SW10_PLUG::PushChannelStateToUI()
   pushSlider(kCtrlTagExpressionSlider, st.expression / 127.0);
   pushSlider(kCtrlTagModulationSlider, st.modulation / 127.0);
 
+  // Force UITick to re-dispatch wheel state for the newly selected channel (the wheels
+  // only move via OnMidi dispatch; sentinels outside legal ranges guarantee re-send).
+  mSentBend = -999.0;
+  mSentMod = -1;
+
   // Pitch-bend knob follows the selected channel's RPN history (parsed on the audio
   // thread). Silent model update + UI refresh only — the engine already applied this
   // exact RPN when it passed through ProcessMidiMsg, so no write-back (no echo).
@@ -1081,7 +1203,10 @@ void SW10_PLUG::PushChannelStateToUI()
 
 const char* SW10_PLUG::GetProgramNameStr(int channel, int program)
 {
-  if (channel == 9)   // MIDI channel 10 = drums; program picks the kit
-    return kDrumKitNames[program & 7];
+  if (channel == 9)   // MIDI channel 10 = drums; program carries the kit's PC number
+  {
+    const int kit = DrumKitIdxFromPC(program);
+    return kDrumKitNames[(kit >= 0) ? kit : 0];
+  }
   return kGMProgramNames[program & 127];
 }

@@ -87,6 +87,10 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: ${{ env.PROJECT_NAME }}-win-${{ matrix.arch }}
+        # Retain as long as the artifact API allows per-run (90 d max here). For longer
+        # retention raise repo Settings → Actions → "Artifact/log retention period" —
+        # that policy then supersedes this cap; uploads inherit it.
+        retention-days: 90
         # No vst2 path: VST2 is gated OFF on CI (proprietary SDK), so that output
         # dir never exists and `if-no-files-found: error` would fail the upload.
         path: |

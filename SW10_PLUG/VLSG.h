@@ -187,6 +187,14 @@ inline uint16_t READ_LE_UINT16(const uint8_t* ptr)
   return ptr[0] | (ptr[1] << 8);
 }
 
+// UI plotting: read-only row (128 entries, each 0..127) of the engine's real velocity
+// response for curve index 0-11 (same row voice_data path uses: [curveIdx + 1]).
+const int32_t* GetVLSGVelocityCurve(int curveIdx);
+
+// UI helper: PC number the engine accepts on the drum channel for kit index 0-7
+// (GS/GM2 kit numbers minus 1; -1 = invalid index). See drum_kits[] in VLSG.cpp.
+int GetVLSGDrumKitPC(int idx);
+
 class VLSG
 {
 public:

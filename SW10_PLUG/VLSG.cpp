@@ -244,8 +244,27 @@ const int32_t velocity_curves[12][128] =
         120, 121, 122, 122, 123, 123, 124, 124, 124, 125, 125, 125, 126, 126, 126, 127
     }
 };
+
+// UI helper: engine's real velocity response for curve index 0-11 (row [idx+1],
+// same indexing voice_data uses). Returns 128 values, each 0..127.
+const int32_t* GetVLSGVelocityCurve(int curveIdx)
+{
+    if (curveIdx < 0) curveIdx = 0;
+    if (curveIdx > 11) curveIdx = 11;
+    return velocity_curves[curveIdx + 1];
+}
+
 const uint8_t drum_kits[8] = { 0, 8, 16, 24, 25, 32, 40, 48 };
 const uint8_t drum_kit_numbers[8] = { 0, 1, 2, 3, 4, 5, 6, 7 };
+
+// UI helper: the program-change number this engine matches for kit index 0-7 on the drum
+// channel (both ProgramChange paths compare event_data[1] against drum_kits[] above and
+// ignore anything else). These are the GS/GM2 standard kit numbers 1/9/17/25/26/33/41/49
+// minus 1. Returns -1 for an out-of-range index.
+int GetVLSGDrumKitPC(int idx)
+{
+    return (idx >= 0 && idx < 8) ? drum_kits[idx] : -1;
+}
 const int32_t dword_C00342C0[4] = { 0, 1, 2, -1 };
 const uint16_t word_C00342D0[17] = { 0, 250, 561, 949, 1430, 2030, 2776, 3704, 4858, 6295, 8083, 10307, 13075, 16519, 20803, 26135, 32768 };
 

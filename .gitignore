@@ -4,6 +4,9 @@ xcuserdata
 # Build output dirs: anchor to repo root so workflows/build-*.yml (unanchored 'build-*'
 # silently ignored build-native.yml & build-wam.yml — they were never committed!) stay tracked.
 /build-*
+/b32/
+/b64/
+/build/
 SW10_PLUG/build-*
 iPlug2/**/build-*
 

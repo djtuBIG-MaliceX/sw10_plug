@@ -153,6 +153,10 @@ See phase checklists in `REFACTOR_PLAN.md`. Done so far:
   `IVKeyboardControl::TriggerMidiMsgFromKeyPress` virtual edit REVERTED/removed — the plain upstream keyboard control
   is used and channel routing happens in `SW10_PLUG::SendMidiMsgFromUI`; §3b item 9). APP/VST2 user-verified
   with audio. Follow-up fixes (dropdown foreground grab, self-hiding VU, UI heartbeat pump, tab MIDI flash,
-  incoming RPN→bend-range knob): REFACTOR_PLAN.md §8b/§8c. NOTE: `loadtest.ps1` VST2 case AVs under pwsh only
+  incoming RPN→bend-range knob): REFACTOR_PLAN.md §8b/§8c. Second reliability round (2026-10-11): dropdown root
+  cause = this pin's `ITextControl` default `mIgnoreMouse=true` (clickable captions opt back via
+  `SetIgnoreMouse(false)`); drum channel speaks GM2 kit PCs (`GetVLSGDrumKitPC` accessor, official kit names,
+  non-kit PCs ignored exactly like the engine); `IGRAPHICS_DISABLE_VSYNC` WM_TIMER pump; host-driven wheel follow;
+  velocity-curve graph — §8d. NOTE: `loadtest.ps1` VST2 case AVs under pwsh only
   (plugin fine in real hosts and a standalone P/Invoke probe — harness quirk, documented §8b; do not "fix" by
   changing the plugin).

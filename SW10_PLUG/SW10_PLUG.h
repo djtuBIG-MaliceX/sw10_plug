@@ -46,6 +46,7 @@ enum EControlTags
   kCtrlTagExpressionSlider,
   kCtrlTagModulationSlider,
   kCtrlTagChannelLabel,
+  kCtrlTagVelCurve,       // velocity-curve preview graph beside the Vel. Curve knob
   kNumCtrlTags
 };
 
@@ -70,8 +71,8 @@ extern const char* kDrumKitNames[8];
 class ChannelWheelControl : public IWheelControl
 {
 public:
-  ChannelWheelControl(const IRECT& bounds, IMidiMsg::EControlChangeMsg cc, const int* pSelectedChannel, int initBendRange = 12)
-  : IWheelControl(bounds, cc, initBendRange)
+  ChannelWheelControl(const IRECT& bounds, IMidiMsg::EControlChangeMsg cc, const int* pSelectedChannel)
+  : IWheelControl(bounds, cc)
   , mpSelectedChannel(pSelectedChannel)
   {
     // Replace the base action function with a channel-aware one
@@ -86,6 +87,13 @@ public:
     });
   }
 
+  // No right-click range menu: the bend range is the P.Bend Rng parameter (single
+  // source of truth, synced both ways with incoming RPN), not a per-wheel secret menu.
+  void OnMouseDown(float x, float y, const IMouseMod& mod) override
+  {
+    ISliderControlBase::OnMouseDown(x, y, mod);
+  }
+
 private:
   const int* mpSelectedChannel;
 };
@@ -94,12 +102,13 @@ private:
     UI can show (and initialise its widgets from) any of the 16 MIDI channels. */
 struct ChannelUiState
 {
-  int program = 0;      // GM program 0-127 (drum kit 0-7 on the drum channel)
+  int program = 0;      // GM program 0-127; on the drum channel: kit PC number (0/8/../48)
   int volume = 100;     // CC7, 0-127
   int pan = 64;         // CC10, 0-127 (64 = centre)
   int expression = 127; // CC11, 0-127
   int modulation = 0;   // CC1, 0-127
   int bendRange = 2;    // pitch-bend semitones (RPN 0/0 + Data MSB), GM default 2
+  double pitch = 0.;    // last pitch-wheel position, -1..1 (wheel follow for host MIDI)
 };
 
 /** Latched RPN selector (CC101/CC100) per MIDI channel; audio-thread only. -1 = none set. */
@@ -122,7 +131,6 @@ public:
   void OnParamChange(int paramIdx) override;
   void OnParamChangeUI(int paramIdx, EParamSource source) override;
   void OnIdle() override;
-  bool OnMessage(int msgTag, int ctrlTag, int dataSize, const void* pData) override;
   void OnUIClose() override;
 
 #if IPLUG_EDITOR
@@ -167,6 +175,13 @@ private:
   std::atomic<int> mPolyCount{ 0 };   // written on the audio thread, read in OnIdle
   ITextControl* polyIndicator = nullptr;
   ITextControl* rateIndicator = nullptr;
+  ITextControl* bendLabel = nullptr;   // "Bend ±N" caption under the pitch wheel
+
+  // Wheel-follow dispatch bookkeeping (UITick/UI thread only): last values forwarded to
+  // the wheel controls via SendMidiMsgFromDelegate (diffed against mChannelUi mirror).
+  double mSentBend = 0.;
+  int mSentMod = -1;
+  int mShownBendRange = -1;
 
   uint8_t* load_rom_file(const char* romname);
   void lsgWrite(uint8_t* event, unsigned int length, int offset = 0);
