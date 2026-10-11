@@ -470,6 +470,8 @@ Synth must follow the host's sample rate everywhere; UI rebuilt as a 16-channel 
 - Reverb: delay taps scale by `freq_ratio` via the `RVD_*` enum (was scattered literals valid only near base
   rate); ring buffer dynamically sized `pow2(≥6×max tap)` (32768 at 11025 — identical to original),
   allocate-new→swap→delete-old handoff, `reverb_data_mask` replaces all `& 0x7FFF`, freed in dtor.
+  (The pure-11025 anchor of this change altered the plugin's historical sound — now split into classic/long
+  timebases per §8e.)
 - Mid-session rate change silences sounding voices (stale increments ⇒ wrong pitch until retriggered).
 - Legacy ring geometry exported for the host layer: `GetLegacyChunkSamples()` (=4·output_size_para frames),
   `GetOutputBufferSamples/Bytes()` (ring = 128·osp int16s; matches the old `&32767` consumer at 44.1k).
@@ -595,6 +597,42 @@ to capture evidence and reverted; submodule porcelain verified clean before comm
 **Verified**: x64 + Win32 Release all 4 targets green; click probe GM/drum menus SHOWN `fails=0` + Power-Kit selection
 screenshot; VST3+CLAP entry probes PASS; APP smoke. Diagnostics fully removed (plugin grep clean, submodule porcelain
 clean).
+
+## 8e. Reverb: classic restored + Long modes (2026-10-11, revised 2026-10-12)
+
+User feedback on §8b's reverb generalisation: the 11025-anchored delays sound "nice… better" but are *fundamentally*
+different (longer pre-delay/echo spacing, far longer/louder tail) from the plugin's historical sound — so the change
+belongs in new modes, not in Reverb 1/2. Root cause of the divergence: before generalisation, taps `500..5118` were
+stepped **once per host frame with fixed sample counts**, so a 44.1 kHz host (the plugin's default & usual home) ran
+them at **¼ of Casio-hardware time** (HW ran 11025). §8b made them hardware-true; users heard quarter→full length.
+
+**v1 (2026-10-11):** Reverb 3/4 "Long" = same network with taps anchored to the 11025 hardware clock (×4 everything).
+User testing then flagged its **pre-delay** as excessive → measured the envelope: uniform ×4 tap stretching spreads
+echoes ~290/465 ms apart with **dead holes between bounces** (−999 dBFS gaps) — holey slap-back, not hall. Probes
+(TEMP `reverb_probe/anatomy/tight/ring`, `/Dprivate=public` single-TU) further proved: big ring + classic taps
+decays exactly like classic (ring size alone does nothing), i.e. tail length ∝ tap round-trip × per-recirc decay —
+the ONLY way to keep density tight AND tail long is raised recirculation damp (how real plates/halls work).
+
+**v2 final design (2026-10-12) — `enum ReverbTailScheme` selects the *tail scheme*, not the tap clock:**
+- **Taps: single anchor for every mode** — `ComputeReverbDelays()` scales the classic table from 44100 Hz to the
+  host rate. Pre-delay/early-reflection spacing identical across Reverb 1–4 and sample-rate-agnostic (verified
+  bit-exact tap tables @44.1k/96k and rate-stability ≤0.2 dB).
+- Reverb 1/2 = classic ring sizing (original `≥6×max_tap` pow2; 32768 at anchor — bit-identical history) with the
+  original recirc damp literals `96/97` (now members `reverb_fb_a/b`, default unchanged → **classic path
+  bit-identical, verified −83.4 dBFS envelope match pre/post refactor**).
+- Reverb **3/4 (Long)** = *same tight taps* through a **×4 larger ring** (`headroom 6→24` in `InitializeReverbBuffer`:
+  131072 @44.1k, pushes wrap-around past the audible tail) with **damp raised to 176/177** (0.375→0.69 per recirc).
+  Measured: head wet ≈ the accepted v1 loudness (−47.5 vs −42.9 dBFS) on the *classic* arrival lattice, t+2 s still
+  −81 dBFS (v1 was dead −113 there and had holes). Stability: integer network is self-limiting (`v4>>3` injection);
+  torture sweep (20× full-velocity overlapping dyads) across damp 128…208 stayed ≤17.6k samples, no runaway;
+  damp=192/208 brighter/ringier — shipped 176/177 ≈ tail-loudness parity with v1.
+- Mode plumbing unchanged: wet shift odd `>>1` / even `0`; enum `{Off, Reverb 1..2, Reverb 3/4 (Long)}`; SysEx keeps
+  selected scheme. Buffer zeroed on mode switch (DisableReverb + alloc-swap handoff).
+- Zero iPlug2 edits.
+
+**Verified**: probe tap/level/stability matrix all PASS (both 44.1k & 96k); x64+Win32 Release all 4 targets green;
+loadtest VST3+CLAP PASS both archs (VST2 case = known §8b pwsh-harness AV); APP window smoke OK.
+Interactive-host listening still open to the user (REAPER) — damp constant is the tuning knob if 176 feels bright.
 
 ## 9. Risks
 

@@ -160,3 +160,9 @@ See phase checklists in `REFACTOR_PLAN.md`. Done so far:
   velocity-curve graph — §8d. NOTE: `loadtest.ps1` VST2 case AVs under pwsh only
   (plugin fine in real hosts and a standalone P/Invoke probe — harness quirk, documented §8b; do not "fix" by
   changing the plugin).
+- **Reverb dual scheme (2026-10-11/12).** Reverb 1/2 = **classic** (taps anchored to the historical 44.1kHz clock —
+  bit-identical at that rate to pre-§8b releases, damp literals 96/97 unchanged). Reverb **3/4 (Long)** = SAME tight
+  taps (classic pre-delay at every host rate) through a ×4 ring with recirc damp raised to 176/177 (members
+  `reverb_fb_a/b` in VLSG.h) — long hall tail without v1's holey slap-back echoes. All modes SR-agnostic via
+  `ComputeReverbDelays` (single 44.1k tap anchor) + per-scheme `InitializeReverbBuffer` sizing. Param enum has 5
+  entries (0x20–0x24); SysEx keeps selected scheme. Zero iPlug2 edits; tuning notes §8e.

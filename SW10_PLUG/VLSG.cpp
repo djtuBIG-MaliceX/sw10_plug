@@ -338,13 +338,12 @@ bool VLSG::VLSG_SetParameter(uint32_t type, uintptr_t value)
             return VLSG_SetPolyphony(24);
 
         case PARAMETER_Effect:
-            if (value == 0x20) {
-                return VLSG_SetEffect(0);
+            // 0x20 off | 0x21 Reverb 1 | 0x22 Reverb 2 (classic, 44.1k-anchored)
+            // 0x23 Reverb 3 | 0x24 Reverb 4 (long, original 11k hardware clock)
+            if (value >= 0x20 && value <= 0x24) {
+                return VLSG_SetEffect((unsigned int)(value - 0x20));
             }
-            if (value == 0x22) {
-                return VLSG_SetEffect(2);
-            }
-            return VLSG_SetEffect(1);
+            return false;
 
         case PARAMETER_VelocityFunc:  // Sysex 0x40 but yeah don't care
             return VLSG_SetVelocityFunc(value & 0xF);
@@ -374,7 +373,9 @@ bool VLSG::VLSG_SetFrequency(unsigned int frequency)
     //   - output_size_para : integer chunk size (legacy ring-buffer layout, defrag cadence)
     //   - phase_interval   : exact fractional samples between envelope phase steps, so
     //                        envelope/LFO rates are identical at every sample rate
-    //   - reverb delays    : scaled to keep the same reverb time at every sample rate
+    //   - reverb delays    : scaled from the historical 44.1k tap anchor so spacing is
+    //                        constant at every sample rate (see ComputeReverbDelays;
+    //                        ring/damp tail schemes per mode in VLSG_SetEffect)
     //   - v_freq           : per-sample phase increment (see voice_set_freq)
     constexpr double base_freq = 11025.0;
     constexpr int base_para = 64;
@@ -404,17 +405,9 @@ bool VLSG::VLSG_SetFrequency(unsigned int frequency)
     output_buffer_size_samples = 128u * (uint32_t) output_size_para;   // int16 elements
     output_buffer_size_bytes = 2u * output_buffer_size_samples;
 
-    static const int base_delays[RVD_NUM] =
-    {
-        500, 501, 826, 827, 1038, 1039, 1176, 1177, 1178, 1179, 1339,
-        3177, 3178, 3179, 3180, 3335, 5118
-    };
-
-    for (int i = 0; i < RVD_NUM; i++)
-    {
-        reverb_delay[i] = (int)(base_delays[i] * freq_ratio + 0.5);
-    }
-
+    // Taps use a single 44.1k anchor (ComputeReverbDelays); reverb_tail only picks
+    // ring size + damp in InitializeReverbBuffer. Voice-retarget handling is unrelated.
+    ComputeReverbDelays();
     InitializeReverbBuffer();
 
     if (retargeted)
@@ -441,7 +434,7 @@ bool VLSG::VLSG_SetPolyphony(unsigned int poly)
 
 bool VLSG::VLSG_SetEffect(unsigned int effect)
 {
-    if (effect > 2) {
+    if (effect > 4) {
         return false;
     }
     effect_param_value = 0x20 + effect;
@@ -449,7 +442,23 @@ bool VLSG::VLSG_SetEffect(unsigned int effect)
     if (effect == 0) {
         return true;
     }
-    if (effect_param_value == 0x22)
+
+    // Reverb 1/2: the plugin's classic sound — tight taps (44.1k anchor), original
+    // 96/97 recirc damp, ring sized to the taps. Reverb 3/4 ("Long"): IDENTICAL tap
+    // spacing (so pre-delay / early-reflection feel matches the classic modes and the
+    // original plugin at every sample rate), but the recirculation runs through a 4x
+    // larger ring with raised damp (176/177), sustaining the tail for seconds without
+    // stretching echoes apart into holey slap-back bounces. Verified stable (self-
+    // limiting >>3 injection; torture-tested full-scale chords, no runaway).
+    reverb_tail = (effect >= 3) ? REVERB_TAIL_LONG_RING4
+                                : REVERB_TAIL_CLASSIC;
+    reverb_fb_a = (effect >= 3) ? 176 : 96;
+    reverb_fb_b = (effect >= 3) ? 177 : 97;
+    ComputeReverbDelays();          // single anchor now, but cheap + order-safe
+    InitializeReverbBuffer();       // ring resize for the scheme (zeroed, index reset)
+
+    // Wet output level pair mirrors Reverb 1/2: odd modes >> 1, even modes unshifted.
+    if (effect_param_value == 0x22 || effect_param_value == 0x24)
     {
         SetReverbShift(0);
         EnableReverb();
@@ -458,6 +467,31 @@ bool VLSG::VLSG_SetEffect(unsigned int effect)
     SetReverbShift(1);
     EnableReverb();
     return true;
+}
+
+// Tap counts in ReverbDelayIdx are time-anchored to the plugin's historical 44.1 kHz
+// clock for EVERY mode — early-reflection spacing (pre-delay feel) is identical across
+// all rates and between Reverb 1/2 vs 3/4. What makes Reverb 3/4 "long" is NOT wider
+// taps (that only stretches echoes apart, with dead holes between bounces): it is the
+// 4x ring buffer plus a higher recirculation damp (reverb_fb_a/b), which sustains the
+// tail in place. Same physics as a plate reverb keeping density while growing larger.
+void VLSG::ComputeReverbDelays(void)
+{
+    static const int base_delays[RVD_NUM] =
+    {
+        500, 501, 826, 827, 1038, 1039, 1176, 1177, 1178, 1179, 1339,
+        3177, 3178, 3179, 3180, 3335, 5118
+    };
+
+    // Guard against SetFrequency never having run (ratio 1.0 until it does).
+    const double ratio = (output_frequency != 0)
+        ? output_frequency / 44100.0 : 1.0;
+
+    for (int i = 0; i < RVD_NUM; i++)
+    {
+        int d = (int)(base_delays[i] * ratio + 0.5);
+        reverb_delay[i] = (d < 1) ? 1 : d;   // taps must stay distinct from the write slot
+    }
 }
 
 bool VLSG::VLSG_SetVelocityFunc(unsigned int curveIdx)
@@ -1994,8 +2028,13 @@ bool VLSG::InitializeReverbBuffer(void)
             max_delay = (uint32_t)reverb_delay[i];
     }
 
+    // Long scheme (Reverb 3/4): same tight taps, but the ring is sized with x4
+    // headroom so wrap-around returns land beyond the sustained tail (~3 s+) instead
+    // of ghost pre-echo punching through it. Classic sizing keeps the original 32768
+    // at its anchor rate (identical ring to pre-refactor builds at 44.1k).
+    const uint32_t headroom = (reverb_tail == REVERB_TAIL_LONG_RING4) ? 24u : 6u;
     uint32_t size = 32768;
-    while (size < max_delay * 6)
+    while (size < max_delay * headroom)
         size <<= 1;
 
     // Only reallocate when there's no buffer yet or the rate (and hence size) changed,
@@ -2226,11 +2265,11 @@ inline void VLSG::GenerateOutputDataVst(double **output_ptr, uint32_t offset1, u
 
       reverb_value3 = reverb_value1 >> 1;
 
-      reverb_value4 = reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_1177]) & reverb_data_mask] - ((96 * reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_1179]) & reverb_data_mask]) >> 8);
+      reverb_value4 = reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_1177]) & reverb_data_mask] - ((reverb_fb_a * reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_1179]) & reverb_data_mask]) >> 8);
       reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_1178]) & reverb_data_mask] = reverb_value4 >> 3;
       reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_3177]) & reverb_data_mask] = reverb_value4 + reverb_value3;
 
-      reverb_value4 = reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_3178]) & reverb_data_mask] - ((97 * reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_3180]) & reverb_data_mask]) >> 8);
+      reverb_value4 = reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_3178]) & reverb_data_mask] - ((reverb_fb_b * reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_3180]) & reverb_data_mask]) >> 8);
       reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_3179]) & reverb_data_mask] = reverb_value4 >> 3;
       reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_5118]) & reverb_data_mask] = reverb_value4 + reverb_value3;
 
@@ -2406,11 +2445,11 @@ void VLSG::GenerateOutputData(uint8_t *output_ptr, uint32_t offset1, uint32_t of
 
             reverb_value3 = reverb_value1 >> 1;
 
-            reverb_value4 = reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_1177]) & reverb_data_mask] - ((96 * reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_1179]) & reverb_data_mask]) >> 8);
+            reverb_value4 = reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_1177]) & reverb_data_mask] - ((reverb_fb_a * reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_1179]) & reverb_data_mask]) >> 8);
             reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_1178]) & reverb_data_mask] = reverb_value4 >> 3;
             reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_3177]) & reverb_data_mask] = reverb_value4 + reverb_value3;
 
-            reverb_value4 = reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_3178]) & reverb_data_mask] - ((97 * reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_3180]) & reverb_data_mask]) >> 8);
+            reverb_value4 = reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_3178]) & reverb_data_mask] - ((reverb_fb_b * reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_3180]) & reverb_data_mask]) >> 8);
             reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_3179]) & reverb_data_mask] = reverb_value4 >> 3;
             reverb_data_ptr[(reverb_data_index + reverb_delay[RVD_5118]) & reverb_data_mask] = reverb_value4 + reverb_value3;
 

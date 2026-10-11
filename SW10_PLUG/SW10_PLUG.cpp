@@ -377,7 +377,7 @@ SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
   start_synth();
 
   GetParam(kParamPolyphony)->InitEnum("Polyphony", polyphony, {"24", "32", "48", "64", "128", "256"});
-  GetParam(kParamReverbMode)->InitEnum("Reverb Mode", reverb_effect, { "Off", "Reverb 1", "Reverb 2" });
+  GetParam(kParamReverbMode)->InitEnum("Reverb Mode", reverb_effect, { "Off", "Reverb 1", "Reverb 2", "Reverb 3 (Long)", "Reverb 4 (Long)" });
   GetParam(kParamPitchBendRange)->InitInt("P.Bend Rng", 2, 0, 127, "semitones", IParam::kFlagsNone, "ADSR");
   GetParam(kParamVelocityFunction)->InitInt("Velocity Curve", 6, 0, 11, "", IParam::kFlagsNone, "ADSR");
   GetParam(kParamBufferRenderMode)->InitEnum("Render Mode", 1, {"Off", "Low Latency", "Original Driver"});

@@ -43,9 +43,10 @@
 #define DRUM_CHANNEL 9
 #define MAX_VOICES 256  // hehehe
 
-// Base reverb delays in samples at the 11025 Hz reference rate of the original driver.
-// They are scaled to the actual output frequency in VLSG_SetFrequency so the reverb
-// time stays constant at any host sample rate.
+// Base reverb tap positions (sample counts) of the comb/delay network, anchored to the
+// plugin's historical 44.1 kHz clock and scaled to the host rate so pre-delay / spacing
+// stay constant at any sample rate. The long tail of Reverb 3/4 comes from ring size +
+// recirc damp (ReverbTailScheme), not from wider taps.
 enum ReverbDelayIdx
 {
   RVD_500 = 0, RVD_501,
@@ -57,6 +58,19 @@ enum ReverbDelayIdx
   RVD_3335,
   RVD_5118,
   RVD_NUM
+};
+
+// Reverb tail scheme (per mode; see VLSG_SetEffect). Tap spacing is ALWAYS anchored
+// to the plugin's historical 44.1 kHz clock (classic pre-delay everywhere); what this
+// selects is the ring size + recirculation damp behind those taps:
+//  - CLASSIC:     original ring sizing + original 96/97 damp — the plugin's
+//                 long-standing short reverb. Reverb 1/2.
+//  - LONG_RING4:  same taps through a 4x larger ring with raised 176/177 damp —
+//                 sustained "hall" tail, no echo holes. Reverb 3/4 ("Long").
+enum ReverbTailScheme
+{
+  REVERB_TAIL_CLASSIC = 0,
+  REVERB_TAIL_LONG_RING4 = 1
 };
 
 
@@ -252,7 +266,7 @@ private:
   int32_t* reverb_data_buffer = nullptr; // dynamically sized (scales with sample rate)
   uint32_t reverb_data_size = 0;
   uint32_t reverb_data_mask = 0x7FFF;
-  int reverb_delay[RVD_NUM];             // delays scaled to output_frequency
+  int reverb_delay[RVD_NUM];             // taps (44.1k-anchored) scaled to output_frequency
   uint32_t reverb_data_index;
   int32_t is_reverb_enabled;
   uint32_t reverb_shift;
@@ -276,6 +290,9 @@ private:
   uint32_t output_buffer_size_bytes;
   uint32_t effect_param_value;
   int32_t* reverb_data_ptr = nullptr;
+  ReverbTailScheme reverb_tail = REVERB_TAIL_CLASSIC; // ring+damp scheme (see enum)
+  int32_t reverb_fb_a = 96;            // recirc-damp numerator /256 (loop A)
+  int32_t reverb_fb_b = 97;            // recirc-damp numerator /256 (loop B)
   uint32_t(*get_time_func)();
 
   bool InitializeVelocityFunc(void);
@@ -291,6 +308,7 @@ private:
   void ControlChange(void);
   void SystemExclusive(void);
   bool InitializeReverbBuffer(void);
+  void ComputeReverbDelays(void);      // re-derives taps from the 44.1k anchor + rate
   bool DeinitializeReverbBuffer(void);
   void EnableReverb(void);
   void DisableReverb(void);
