@@ -28,6 +28,10 @@
 #include <cstring>
 #include <algorithm>
 
+#ifdef OS_WIN
+#include "IGraphicsWin.h"   // GetWindow() HWND for the popup-menu foreground fix
+#endif
+
 static struct timespec start_time;
 
 static const char* arg_rom = "ROMSXGM.BIN";
@@ -143,6 +147,17 @@ public:
   {
     if (!mOnClick) return;
 
+#ifdef OS_WIN
+    // iPlug2's Windows backend tracks native menus without foregrounding the plug window;
+    // when a host owns the foreground, TrackPopupMenu dismisses clicks without sending
+    // WM_COMMAND (the selection silently does nothing). Grab the foreground first.
+    if (auto pWin = dynamic_cast<IGraphicsWin*>(GetUI())) {
+      if (HWND hWnd = static_cast<HWND>(pWin->GetWindow())) {
+        ::SetForegroundWindow(hWnd);
+      }
+    }
+#endif
+
     mMenu = std::make_unique<IPopupMenu>("");
     mOnClick(*this, *mMenu);
     GetUI()->CreatePopupMenu(*this, *mMenu, mRECT.L, mRECT.B);
@@ -160,6 +175,121 @@ private:
   ClickFunc mOnClick;
   bool mDrawFrame;
   std::unique_ptr<IPopupMenu> mMenu;
+};
+
+// -----------------------------------------------------------------------------
+/** Zero-size, invisible control whose sole job is pumping a UI-thread callback.
+    Setting an animation function makes IControl::IsDirty() permanently true, so the
+    plug window's own paint pump (WM_TIMER/vsync — always alive on any GUI thread,
+    unlike the plugin's idle timer which some hosts never fire) drives the tick every
+    frame. The empty rect ensures it can never take mouse hits. */
+class IdleTickControl : public IControl
+{
+public:
+  using TickFunc = std::function<void()>;
+
+  explicit IdleTickControl(TickFunc tick)
+  : IControl(IRECT(), kNoParameter)   // empty rect: Contains() is always false
+  , mTick(std::move(tick))
+  {
+    SetAnimation([this](IControl* /*pCaller*/) {   // no duration == runs every repaint
+      if (mTick) mTick();
+    });
+  }
+
+  void Draw(IGraphics&) override { /* invisible */ }
+
+private:
+  TickFunc mTick;
+};
+
+// -----------------------------------------------------------------------------
+/** IVLEDMeterControl that stays invisible until the peak sender has actually delivered
+    feed data at least once. In hosts where no processor->UI traffic ever arrives (dead
+    idle path), the dead meter frame is hidden instead of misleadingly on-screen; the
+    moment real data flows it appears and never hides again. */
+class SW10MeterControl : public IVLEDMeterControl<2>
+{
+public:
+  explicit SW10MeterControl(const IRECT& bounds)
+  : IVLEDMeterControl<2>(bounds)
+  {
+  }
+
+  void Draw(IGraphics& g) override
+  {
+    if (!mFedOnce) return;   // nothing populating us -> stay hidden
+    IVLEDMeterControl<2>::Draw(g);
+  }
+
+  void OnMsgFromDelegate(int msgTag, int dataSize, const void* pData) override
+  {
+    IVLEDMeterControl<2>::OnMsgFromDelegate(msgTag, dataSize, pData);
+    if (msgTag == ISender<>::kUpdateMessage) {
+      mFedOnce = true;
+      SetDirty(false);   // repaint -> Draw() now shows the meter
+    }
+  }
+
+private:
+  bool mFedOnce = false;
+};
+
+// -----------------------------------------------------------------------------
+/** Tab strip that tints a channel's tab in fading amber for a moment whenever that
+    channel received MIDI traffic (kMsgTagChannelActivity bitmask from the delegate). */
+class ChannelActivityTabSwitchControl : public IVTabSwitchControl
+{
+public:
+  static constexpr int kFlashMs = 250;
+
+  ChannelActivityTabSwitchControl(const IRECT& bounds, IActionFunction aF,
+                                  const std::vector<const char*>& options, const char* label = "",
+                                  const IVStyle& style = DEFAULT_STYLE)
+  : IVTabSwitchControl(bounds, std::move(aF), options, label, style)
+  {
+  }
+
+  void OnMsgFromDelegate(int msgTag, int dataSize, const void* pData) override
+  {
+    if (msgTag == kMsgTagChannelActivity && pData && dataSize >= (int)sizeof(uint32_t)) {
+      const uint32_t mask = *static_cast<const uint32_t*>(pData);
+      if (mask) {
+        const unsigned long long now = GetTickCount64();
+        for (int ch = 0; ch < MIDI_CHANNELS && ch < 32; ch++) {
+          if (mask & (1u << ch)) mFlashUntil[ch] = now + kFlashMs;
+        }
+      }
+    }
+    IVTabSwitchControl::OnMsgFromDelegate(msgTag, dataSize, pData);
+  }
+
+  void DrawWidget(IGraphics& g) override
+  {
+    mDrawIdx = 0;   // base loops DrawButton() in tab order; see counter use below
+    IVTabSwitchControl::DrawWidget(g);
+  }
+
+  void DrawButton(IGraphics& g, const IRECT& r, bool pressed, bool mouseOver,
+                  ETabSegment segment, bool disabled) override
+  {
+    IVTabSwitchControl::DrawButton(g, r, pressed, mouseOver, segment, disabled);
+
+    const int ch = mDrawIdx++;
+    if (ch < 0 || ch >= MIDI_CHANNELS) return;
+
+    const unsigned long long now = GetTickCount64();
+    if (now >= mFlashUntil[ch]) return;
+
+    // linear fade-out tint, drawn before the tab label (base draws text after us)
+    const double frac = static_cast<double>(mFlashUntil[ch] - now) / kFlashMs;   // 1..0
+    const int alpha = static_cast<int>(185.0 * frac + 0.5);
+    if (alpha > 4) g.FillRect(IColor(alpha, 255, 176, 32), r);
+  }
+
+private:
+  int mDrawIdx = 0;
+  unsigned long long mFlashUntil[MIDI_CHANNELS] = {};
 };
 
 // -----------------------------------------------------------------------------
@@ -231,7 +361,7 @@ SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
       IText(S(13), EAlign::Center, COLOR_BLACK), nullptr, /*drawFrame*/ false));
 
     std::vector<const char*> chOptions(kChannelOptionLabels, kChannelOptionLabels + 16);
-    auto pTabs = new IVTabSwitchControl(tabRow.GetReducedFromLeft(S(72)),
+    auto pTabs = new ChannelActivityTabSwitchControl(tabRow.GetReducedFromLeft(S(72)),
       [this](IControl* pCaller) {
         mSelectedChannel = pCaller->As<IVTabSwitchControl>()->GetSelectedIdx();
         PushChannelStateToUI();   // wheels/sliders/program caption follow the channel
@@ -302,7 +432,7 @@ SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
 
     // ---- Master meter: right column, from under the tab row down to the keyboard ----
     const IRECT meterR = IRECT(b.R - S(108), b.T + S(42), b.R - S(6), kbdAll.T - S(4));
-    pGraphics->AttachControl(new IVLEDMeterControl<2>(meterR), kCtrlTagMeter);
+    pGraphics->AttachControl(new SW10MeterControl(meterR), kCtrlTagMeter);
 
     // ---- Global knobs ---------------------------------------------------------------
     const IRECT knobsR = knobRow.GetReducedFromRight(S(280));
@@ -326,7 +456,9 @@ SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
     // ---- Keyboard with octave shift --------------------------------------------------
     static const char* kNoteNames[12] = { "C","C#","D","D#","E","F","F#","G","G#","A","A#","B" };
 
-    auto pKbd = new ChannelKeyboardControl(keysR, 36, 96, &mSelectedChannel);
+    // Upstream IVKeyboardControl unchanged (always sends channel 0); SW10_PLUG::
+    // SendMidiMsgFromUI retargets it to the selected channel, so no submodule edit.
+    auto pKbd = new IVKeyboardControl(keysR, 36, 96);
     pKbd->SetShowNotesAndVelocity(true);
     pGraphics->AttachControl(pKbd, kCtrlTagKeyboard);
 
@@ -355,6 +487,14 @@ SW10_PLUG::SW10_PLUG(const InstanceInfo& info)
     pGraphics->SetQwertyMidiKeyHandlerFunc([pGraphics](const IMidiMsg& msg) {
                                               pGraphics->GetControlWithTag(kCtrlTagKeyboard)->As<IVKeyboardControl>()->SetNoteFromMidi(msg.NoteNumber(), msg.StatusMsg() == IMidiMsg::kNoteOn);
                                            });
+
+    // ---- UI pump ---------------------------------------------------------------------
+    // Some hosts never fire IPlugAPIBase::OnIdle (its timer lives on the thread that
+    // constructed the plugin, which may not pump messages). This invisible zero-size
+    // control runs UITick() from the window's own repaint loop instead. Attached last:
+    // IGraphics treats control 0 specially for key events, and its empty rect means it
+    // never participates in hit-testing or drawing.
+    pGraphics->AttachControl(new IdleTickControl([this] { UITick(); }));
 
     // Initial UI state from the channel mirror (host may have set programs before the UI opened)
     PushChannelStateToUI();
@@ -539,11 +679,25 @@ void SW10_PLUG::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 
 void SW10_PLUG::OnIdle()
 {
+  UITick();
+}
+
+#if IPLUG_EDITOR
+void SW10_PLUG::UITick()
+{
   mMeterSender.TransmitData(*this);
 
   if (mUiStateDirty) {
     mUiStateDirty = 0;
     PushChannelStateToUI();
+  }
+
+  // Push any new per-channel MIDI traffic to the tab strip (flash tint).
+  const uint32_t activity = mChActivityMask.exchange(0, std::memory_order_relaxed);
+  if (activity) {
+    if (auto pGraphics = GetUI())
+      SendControlMsgFromDelegate(kCtrlTagChannelButtons, kMsgTagChannelActivity,
+                                static_cast<int>(sizeof(activity)), &activity);
   }
 
   // Debounced main-thread-only updates of the audio-thread counters (never touch the
@@ -558,6 +712,28 @@ void SW10_PLUG::OnIdle()
     rateIndicator->SetStrFmt(24, "SR: %d Hz", mSampleRateHint);
   }
 }
+
+void SW10_PLUG::SendMidiMsgFromUI(const IMidiMsg& msg)
+{
+  // Everything the UI emits (on-screen keyboard, qwerty input, wheels, faders, program
+  // popup) is authored on channel 0/selected; retarget channel-voice events so all of it
+  // follows the selected-channel UI without subclassing upstream controls.
+  IMidiMsg m = msg;
+  const int status = m.StatusMsg();
+  if (status == IMidiMsg::kNoteOn || status == IMidiMsg::kNoteOff ||
+      status == IMidiMsg::kControlChange || status == IMidiMsg::kProgramChange ||
+      status == IMidiMsg::kChannelAftertouch || status == IMidiMsg::kPitchWheel)
+  {
+    m.mStatus = static_cast<uint8_t>((status << 4) | (mSelectedChannel & 0xF));
+
+    // Mirror immediately so the UI follows live even before the audio pass drains this
+    // message (some hosts run blocks slowly or not at all when transport is stopped).
+    UpdateChannelUiState(m);
+  }
+
+  IPlugAPIBase::SendMidiMsgFromUI(m);
+}
+#endif
 
 void SW10_PLUG::OnReset()
 {
@@ -754,6 +930,7 @@ void SW10_PLUG::OnParamChange(int paramIdx)
       vlsgInstance->VLSG_SetParameter(PARAMETER_Effect, 0x20 + reverb_effect);
       break;
     case kParamPitchBendRange:
+      mChannelUi[mSelectedChannel].bendRange = value;   // keep the mirror authoritative
       SendPitchBendRPN(mSelectedChannel, value);
       break;
     case kParamVelocityFunction:
@@ -810,6 +987,9 @@ void SW10_PLUG::UpdateChannelUiState(const IMidiMsg& msg)
   const int ch = msg.Channel();
   if (ch < 0 || ch >= MIDI_CHANNELS) return;
 
+  // Traffic on this channel -> flash its tab (consumed by UITick at UI-thread rate).
+  mChActivityMask.fetch_or(1u << ch, std::memory_order_relaxed);
+
   bool touched = false;
   switch (msg.StatusMsg())
   {
@@ -825,6 +1005,24 @@ void SW10_PLUG::UpdateChannelUiState(const IMidiMsg& msg)
         case 7:  mChannelUi[ch].volume      = val; touched = true; break;
         case 10: mChannelUi[ch].pan         = val; touched = true; break;
         case 11: mChannelUi[ch].expression  = val; touched = true; break;
+        case 98: // fall through — NRPN selectors make any latched RPN stale
+        case 99:
+          mRpn[ch].msb = mRpn[ch].lsb = -1;   // entering NRPN territory
+          break;
+        case 101: mRpn[ch].msb = val & 0x7F; break;   // RPN selector MSB
+        case 100: mRpn[ch].lsb = val & 0x7F; break;   // RPN selector LSB
+        case 6:   // Data Entry MSB — apply the selected function
+          // RPN 0/0 = pitch bend coarse, value in semitones: reflect it on the UI knob.
+          if (mRpn[ch].msb == 0 && mRpn[ch].lsb == 0) {
+            mChannelUi[ch].bendRange = val & 0x7F;
+            touched = true;
+          }
+          break;
+        case 38:  // Data Entry LSB — semitones only here, ignore fractional input
+          break;
+        case 121: // Reset All Controllers
+          mRpn[ch].msb = mRpn[ch].lsb = -1;
+          break;
         default: break;
       }
       break;
@@ -841,8 +1039,10 @@ void SW10_PLUG::UpdateChannelUiState(const IMidiMsg& msg)
 
 void SW10_PLUG::ResetChannelUiState()
 {
-  for (int ch = 0; ch < MIDI_CHANNELS; ch++)
+  for (int ch = 0; ch < MIDI_CHANNELS; ch++) {
     mChannelUi[ch] = ChannelUiState();   // GM defaults (program 0, vol 100, pan centre...)
+    mRpn[ch] = RpnState();               // forget stale latched RPN selectors
+  }
 }
 
 void SW10_PLUG::PushChannelStateToUI()
@@ -860,6 +1060,15 @@ void SW10_PLUG::PushChannelStateToUI()
   pushSlider(kCtrlTagPanSlider, st.pan / 127.0);
   pushSlider(kCtrlTagExpressionSlider, st.expression / 127.0);
   pushSlider(kCtrlTagModulationSlider, st.modulation / 127.0);
+
+  // Pitch-bend knob follows the selected channel's RPN history (parsed on the audio
+  // thread). Silent model update + UI refresh only — the engine already applied this
+  // exact RPN when it passed through ProcessMidiMsg, so no write-back (no echo).
+  auto pBend = GetParam(kParamPitchBendRange);
+  if (pBend && pBend->Value() != st.bendRange) {
+    pBend->Set(st.bendRange);   // silent model update (this pin's IParam setter)
+    SendParameterValueFromDelegate(kParamPitchBendRange, static_cast<double>(st.bendRange), false);
+  }
 
   char buf[96];
   snprintf(buf, sizeof(buf), "%s", GetProgramNameStr(mSelectedChannel, st.program));

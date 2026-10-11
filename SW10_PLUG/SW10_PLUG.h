@@ -54,6 +54,7 @@ enum ECustomMsgTags
 {
   kMsgTagSelectChannel = 0x53434853, // 'SCHS' (reserved for future UI-originated channel select)
   kMsgTagProgramName,                // NUL-terminated display string pushed to a text control
+  kMsgTagChannelActivity,            // uint32_t bitmask of MIDI channels with new traffic (tab flash)
 };
 
 using namespace iplug;
@@ -63,33 +64,6 @@ using namespace igraphics;
 extern const char* kGMProgramNames[128];
 // Drum kit names for the drum channel (maps to ROM programs 128-135)
 extern const char* kDrumKitNames[8];
-
-/** IVKeyboardControl always transmits on channel 1; this subclass transmits on the
-    currently selected MIDI channel so all 16 channels can be played from the UI. */
-class ChannelKeyboardControl : public IVKeyboardControl
-{
-public:
-  ChannelKeyboardControl(const IRECT& bounds, int minNote, int maxNote, const int* pSelectedChannel)
-  : IVKeyboardControl(bounds, minNote, maxNote)
-  , mpSelectedChannel(pSelectedChannel)
-  {}
-
-  void TriggerMidiMsgFromKeyPress(int key, int velocity) override
-  {
-    IMidiMsg msg;
-    const int nn = GetMidiNoteNumberForKey(key);
-
-    if (velocity > 0)
-      msg.MakeNoteOnMsg(nn, velocity, 0, *mpSelectedChannel);
-    else
-      msg.MakeNoteOffMsg(nn, 0, *mpSelectedChannel);
-
-    GetDelegate()->SendMidiMsgFromUI(msg);
-  }
-
-private:
-  const int* mpSelectedChannel;
-};
 
 /** IWheelControl always transmits on channel 1; this subclass transmits on the currently
     selected MIDI channel (pitch bend or a linked CC such as the mod wheel). */
@@ -125,6 +99,14 @@ struct ChannelUiState
   int pan = 64;         // CC10, 0-127 (64 = centre)
   int expression = 127; // CC11, 0-127
   int modulation = 0;   // CC1, 0-127
+  int bendRange = 2;    // pitch-bend semitones (RPN 0/0 + Data MSB), GM default 2
+};
+
+/** Latched RPN selector (CC101/CC100) per MIDI channel; audio-thread only. -1 = none set. */
+struct RpnState
+{
+  int msb = -1;
+  int lsb = -1;
 };
 
 class SW10_PLUG final : public Plugin
@@ -143,6 +125,18 @@ public:
   bool OnMessage(int msgTag, int ctrlTag, int dataSize, const void* pData) override;
   void OnUIClose() override;
 
+#if IPLUG_EDITOR
+  // IEditorDelegate: retargets every UI-originated channel-voice message (on-screen
+  // keyboard, qwerty input, wheels, faders, program popup) to the selected channel.
+  void SendMidiMsgFromUI(const IMidiMsg& msg) override;
+
+  /** Drains the audio->UI queues. Called from OnIdle AND pumped by an always-live
+      control animation, so metering/state keeps updating even in hosts whose idle
+      callbacks never fire (iPlug2's OnIdle rides a thread-message timer bound to the
+      constructing thread, which some hosts do not pump). */
+  void UITick();
+#endif
+
 private:
   std::unique_ptr<VLSG> vlsgInstance;
   IPeakAvgSender<2> mMeterSender;
@@ -155,6 +149,8 @@ private:
 
   // UI channel management
   ChannelUiState mChannelUi[MIDI_CHANNELS];
+  RpnState mRpn[MIDI_CHANNELS];          // audio-thread RPN latching (CC101/CC100/CC6)
+  std::atomic<uint32_t> mChActivityMask{ 0 }; // channels with new MIDI traffic (bit = ch), consumed in UITick
   int mSelectedChannel = 0;
   int mUiStateDirty = 0;      // selected-channel state changed, push to UI on next idle
   int mKeyboardOctave = 0;    // keyboard octave shift, in octaves from the base range

@@ -149,7 +149,10 @@ See phase checklists in `REFACTOR_PLAN.md`. Done so far:
 - **Host sample-rate following + 16-channel keyboard UI (2026-10-11).** Sample rate is host-driven (`OnReset`→
   `VLSG_SetFrequency(GetSampleRate())`; enum param removed); engine cadence/reverb/phase generalized off the
   11025 Hz reference, reverb buffer dynamic. UI: channel tabs 1–16, GM program dropdown, per-ch Vol/Pan/Expr/Mod
-  faders, Bend|Mod wheels left of the keyboard, octave bar; one iPlug2 edit (`IVKeyboardControl::
-  TriggerMidiMsgFromKeyPress` made virtual — §3b item 9; rebuild after submodule reset!). APP/VST2 user-verified
-  with audio. Details: REFACTOR_PLAN.md §8b. NOTE: `loadtest.ps1` VST2 case AVs under pwsh only (plugin fine in
-  real hosts and a standalone P/Invoke probe — harness quirk, documented §8b; do not "fix" by changing the plugin).
+  faders, Bend|Mod wheels left of the keyboard, octave bar. **Zero iPlug2 source edits** (former
+  `IVKeyboardControl::TriggerMidiMsgFromKeyPress` virtual edit REVERTED/removed — the plain upstream keyboard control
+  is used and channel routing happens in `SW10_PLUG::SendMidiMsgFromUI`; §3b item 9). APP/VST2 user-verified
+  with audio. Follow-up fixes (dropdown foreground grab, self-hiding VU, UI heartbeat pump, tab MIDI flash,
+  incoming RPN→bend-range knob): REFACTOR_PLAN.md §8b/§8c. NOTE: `loadtest.ps1` VST2 case AVs under pwsh only
+  (plugin fine in real hosts and a standalone P/Invoke probe — harness quirk, documented §8b; do not "fix" by
+  changing the plugin).

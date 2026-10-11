@@ -136,17 +136,13 @@ Phase 1 additions (2026-09-15, pin `d54f69050`):
    `find_package(iPlug2)` / `add_subdirectory` instead of hand-writing `sources_core.cmake` — likely a big scope cut,
    but verify /MT, `_xp`-era flags and our deploy hooks are expressible before switching.
 
-9. **`IVKeyboardControl::TriggerMidiMsgFromKeyPress` made `virtual` + `protected`**
-   (`iPlug2/IGraphics/Controls/IVKeyboardControl.h`, 2026-10 — **the only iPlug2 *source* edit**, `m iPlug2` dirty):
-   the multi-channel UI needs a keyboard that transmits on the currently-selected MIDI channel, but upstream hardcodes
-   `MakeNoteOnMsg(nn, vel, 0)` (channel defaults to 0) with no delegate hook to remap it. Marking the one method that
-   emits note on/off messages `virtual` lets a superproject subclass (`ChannelKeyboardControl`) override just that
-   method and pass `*mpSelectedChannel` — zero behaviour change for every other consumer (signature + default body
-   byte-identical). `IWheelControl` needed no edit: its channel-hardcoded emit lives in an action lambda we already
-   replace via `SetActionFunction` (`ChannelWheelControl`). This is upstreamable (a strict API extension) — if the
-   submodule working tree is ever reset, re-apply by adding `virtual` to that method and moving it to a `protected:`
-   section. Re-applied/verified with this session's MSVC x64+Win32 builds (§8b). If submitting upstream, send a PR
-   against `master`; until merged it is lost on submodule checkout like the items above.
+ 9. ~~**IVKeyboardControl::TriggerMidiMsgFromKeyPress made irtual + protected**~~ - **REVERTED 2026-10-11
+    (submodule clean at d54f69050, zero source edits).** That edit (and the ChannelKeyboardControl subclass that
+    needed it) broke the build on a clean submodule checkout. Replacement without touching iPlug2: the UI uses the
+    plain upstream IVKeyboardControl (emits channel 0) and every UI-originated channel-voice message is retargeted
+    to the selected channel centrally in SW10_PLUG::SendMidiMsgFromUI (delegate override; also covers qwerty
+    input). IWheelControl still needs no edit (ChannelWheelControl swaps the action lambda; retarget there is a
+    harmless identity). Details: §8c.
 
 ## 4. Phase 1 — iPlug2 update (DONE 2026-09-15)
 
@@ -490,9 +486,10 @@ Synth must follow the host's sample rate everywhere; UI rebuilt as a 16-channel 
   `MakeProgramChange` — self-fed back via `mMidiMsgsFromEditor`, confirmed for all four targets); Vol/Pan/Expr/Mod
   faders (CC7/10/11/1 on selected channel); Voices + host-SR readouts; right dB-meter column; octave bar
   `< C2–C7 >` (−3…+2, `SetNoteRange`); **Bend|Mod wheels side-by-side left of the keys** (user-requested,
-  matches original). Channel-aware transmit: `ChannelKeyboardControl` overrides the newly-virtual
-  `TriggerMidiMsgFromKeyPress` (submodule edit, §3b item 9); `ChannelWheelControl` swaps
-  `IWheelControl`'s action lambda. RPN bend-range now targets the selected channel (`SendPitchBendRPN`).
+   matches original). Channel-aware transmit (superseded - see 8c): originally `ChannelKeyboardControl` overrode a
+   submodule-virtualized `TriggerMidiMsgFromKeyPress`; now the plain upstream keyboard is used and routing moved
+   to `SendMidiMsgFromUI`. `ChannelWheelControl` swaps `IWheelControl`'s action lambda. RPN bend-range now
+   targets the selected channel (`SendPitchBendRPN`).
 - **HiDPI gotcha (costly lesson):** with `GetScaleForScreen` scaling on 4K, `GetBounds()` is device px — every
   layout constant goes through `S(v)=v·(bounds.W()/1024)`. And `IRECT::GetGridCell(cellIndex, nRows, nColumns)`
   — passing row-major args or `nRows=0` yields degenerate/stacked cells (the "knobs pile up" symptom).
@@ -503,6 +500,55 @@ Synth must follow the host's sample rate everywhere; UI rebuilt as a 16-channel 
   Plan B). Win7 x86 is the pragmatic floor today (NanoVG/GL2, static CRT).
 - **Skia backend**: still selectable but Windows upstream lib layout diverges from our deps zip; untested at link.
 - Skia-lib `SW10_DEPS_WIN_DIR` wiring is present but only FAT-checked when `IGRAPHICS_BACKEND=SKIA`.
+
+## 8c. UI reliability pass — no-submodule keyboard routing, meter/idle fixes (2026-10-11)
+
+User-reported: compile break after the submodule reset (dangling `TriggerMidiMsgFromKeyPress` override), VU meter dead
+in some hosts, GM "preset" dropdown inert in hosts, UI not following live MIDI until a channel tab is clicked. All
+fixed with **zero iPlug2 edits**; shims live in `SW10_PLUG.cpp/h`.
+
+- **Keyboard channel routing (compiler fix):** `ChannelKeyboardControl` deleted; UI uses plain upstream
+  `IVKeyboardControl`. `SW10_PLUG::SendMidiMsgFromUI` (override of the delegate hook, runs on UI thread) rewrites
+  `mStatus`'s low nibble of every channel-voice message (note on/off, CC, prog, AFT, PB) to `mSelectedChannel`, then
+  chains to `IPlugAPIBase::SendMidiMsgFromUI`. Covers keyboard, qwerty (`SetQwertyMidiKeyHandlerFunc` emits via the
+  same delegate call), wheels, faders, program popup — one choke point. Mirror is updated synchronously there too, so
+  UI feedback doesn't wait on block processing. Accepted edge: holding a key across a channel-tab switch releases on
+  the new channel (single-mouse UI, same as before).
+- **Root cause of meter-dead + UI-only-updates-on-click:** both depended on `OnIdle()`, driven by iPlug2's
+  `IDLE_TIMER_RATE` Win32 timer — `SetTimer(hWnd=NULL)` posts WM_TIMER to the *constructing thread's queue*; hosts
+  that construct the plugin on a non-pumping thread never deliver it (tab clicks still refreshed because their action
+  lambda calls `PushChannelStateToUI` directly). Fix: an invisible zero-size `IdleTickControl` — a control with an
+  animation function is permanently dirty and gets pumped by the **plug window's own paint timer/vsync** (GUI thread,
+  always alive); it calls the new `SW10_PLUG::UITick()` (meter `TransmitData`, dirty mirror push, activity mask,
+  poly/SR labels) every repaint (~60 fps). `OnIdle` now just calls `UITick()` too (unchanged semantics for hosts
+  where the timer works; same main thread, serialized).
+- **VU meter hides when unpopulated:** `SW10MeterControl : IVLEDMeterControl<2>` renders nothing until the peak
+  sender has delivered its first `kUpdateMessage` (never shown = "hidden" in dead-idle hosts; appears at first audio
+  and stays). Zeros/silence still paint a resting meter once fed.
+- **Dropdown inert in hosts:** iPlug2's `IGraphicsWin::CreatePlatformPopupMenu` calls `TrackPopupMenu` without taking
+  the foreground — when a host window owns focus, Windows dismisses menu clicks without sending `WM_COMMAND`, so the
+  selection silently vanished. `MenuTextControl::OnMouseDown` now `SetForegroundWindow(GetUI()->GetWindow())` before
+  `CreatePopupMenu` (OS_WIN-guarded; also fixes the bender-range menu).
+- **Channel-tab MIDI flash:** `UpdateChannelUiState` ORs `1<<ch` into atomic `mChActivityMask` for every channel
+  message (host *and* UI-originated, both render modes); `UITick` exchanges it and sends
+  `kMsgTagChannelActivity` (uint32 mask) to the tab strip; `ChannelActivityTabSwitchControl : IVTabSwitchControl`
+  overrides `DrawButton` (index via draw-order counter reset in `DrawWidget`) to paint a fading amber tint per
+  active channel (`GetTickCount64`, ~250 ms fade).
+- **Live host-RPN → P.Bend Rng knob:** audio-thread parser in `UpdateChannelUiState` latches CC101/CC100 per channel
+  (`RpnState`, invalidated on NRPN entry CC98/99 and CC121), applies **Data Entry MSB (CC6)** while RPN 0/0 is
+  selected → `ChannelUiState::bendRange` (GM default 2; RPN NULL 127/127 simply deselects; CC38 LSB ignored —
+  integer semitones). `PushChannelStateToUI` silently syncs the param (`IParam::Set`) + refreshes the knob via
+  `SendParameterValueFromDelegate` (non-normalized) — no write-back to the engine (the host's own RPN already went
+  through `lsgWrite`), no echo. User/host knob edits update the mirror for the selected channel instead.
+- **API notes (this pin):** `IMidiMsg` fields are `mStatus/mData1/mData2` (no `mData0`); silent param setter is
+  `IParam::Set`; `SendParameterValueFromDelegate(idx, rawValue, false)` converts via `ToNormalized` and repaints any
+  control bound to the param.
+
+**Verified**: x64 + Win32 Release, all 4 targets green (VS18); ROM staged next to every artifact; VST3 factory + CLAP
+entry probes PASS both archs via standalone `probe` (the pwsh `loadtest.ps1` VST2 case still AVs — documented
+harness-only quirk, plugin unaffected: real hosts + prior standalone probe fine); APP window smoke x64 (alive 6 s,
+title set = ROM loaded, heartbeat drawing). Dropdown/flash/meter-follow behaviour need a quick interactive REAPER pass;
+not automatable here (no DAW installed).
 
 ## 9. Risks
 
