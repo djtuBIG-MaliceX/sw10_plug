@@ -166,3 +166,10 @@ See phase checklists in `REFACTOR_PLAN.md`. Done so far:
   `reverb_fb_a/b` in VLSG.h) — long hall tail without v1's holey slap-back echoes. All modes SR-agnostic via
   `ComputeReverbDelays` (single 44.1k tap anchor) + per-scheme `InitializeReverbBuffer` sizing. Param enum has 5
   entries (0x20–0x24); SysEx keeps selected scheme. Zero iPlug2 edits; tuning notes §8e.
+- **Sample-accurate Low Latency ingest + decompile-name cleanup (2026-10-12).** Low Latency (`VLSG_BufferVst`) now
+  drains MIDI/SysEx at every sample's exact offset and applies pitch/level controllers to sounding voices immediately
+  (`ApplyLiveController`, same math as the phase cadence) — bends are no longer grid-locked (A/B: old lag up to ~580
+  smp, new within ±30 = measurement granularity; steady-tone stream corr 1.0000). Note-on pop fixed via silent-start
+  (`field_28/38` zeroed in `StartPlayingVoice`). **Original Driver mode (`VLSG_Buffer`) cadence untouched.** Renamed:
+  `sub_C0036FB0`→`pan_attenuation_shift`, `sub_C0036FE0`→`step_pitch_lfo`, `sub_C0037140`→`step_amp_envelope`;
+  `inline` lives on definitions not declarations. Zero iPlug2 edits; full write-up §8f.

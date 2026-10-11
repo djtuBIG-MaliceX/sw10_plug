@@ -634,6 +634,43 @@ the ONLY way to keep density tight AND tail long is raised recirculation damp (h
 loadtest VST3+CLAP PASS both archs (VST2 case = known §8b pwsh-harness AV); APP window smoke OK.
 Interactive-host listening still open to the user (REAPER) — damp constant is the tuning knob if 176 feels bright.
 
+## 8f. Sample-accurate event ingest in Low Latency mode + `sub_<hex>` renames (2026-10-12)
+
+User report: pitch bends sound "steppy" on fast MIDI in Low Latency (bufferMode 1) because the envelope
+phase quantum computed pitch/env *before* rendering, snapping every event to the grid. Original Driver
+(bufferMode 2) must keep the legacy cadence.
+
+**Root cause (two-stage quantization):** `VLSG_BufferVst` only drained MIDI/SysEx inside the phase-boundary
+gate (~every `phase_interval` = 256 smp @44.1k), and the drained pitch only became audible when `voice_set_freq`
+next ran — phases 3/7, i.e. a second, sparser grid (every 4 quanta). A/B harness (`%TEMP%\sw10probe\vlsg_probe.cpp`,
+links `VLSG.obj` directly + real `IMidiQueue`; the plugin-layer VST2 route hits the known §8b minimal-host AV):
+measured per-transition lag vs. injected sample = `322 13 322 22 322 −7 …` (grid-locked, mean ≈ +167 smp) on OLD;
+`2 −3 29 −16 … max ±29` (< one 43-smp period, all measurement granularity) on NEW.
+
+**Design (`VLSG.h/.cpp` only — zero iPlug2 edits):**
+- Drain SysEx+MIDI **every sample** (loop is already 1-frame `quant`): events land at their exact `mOffset`.
+- New `VLSG::ApplyLiveController(channel, LIVE_PITCH|LIVE_AMP)` runs right after pitch-wheel / channel-aftertouch /
+  CC ingest and recomputes `v_freq` (phases-3/7 formula verbatim: `base_freq + mod·(field_54>>8)>>7 + (field_4C>>3)`)
+  and `voice_set_amp`+`field_38` for that channel's voices — reused math, so tone at the quantum grid is untouched;
+  only control latency becomes sample-accurate. The old FIXME in `VLSG_BufferVst` is resolved and removed.
+- Note-on pop (the original reason for the boundary-tied drain) fixed at source: `StartPlayingVoice` now zeroes
+  `field_28/field_38` — fresh voices begin silent instead of rendering the slot's previous voice's gain until the
+  next envelope step (protective for legacy mode too, where slots are uninitialized heap).
+- Original Driver path (`VLSG_Buffer`) and its drain/phase cadence: untouched, byte-for-byte.
+
+**Verified (x64 Release):** steady-tone A/B (no-event schedule): per-block RMS ratios 0.983..1.019, cross-correlation
+`lag=240 smp (= note-on grid delay on OLD), corr=1.00000`, residual 0.15% ⇒ engine math identical, only timing moved.
+All 4 targets build green; loadtest VST3/CLAP PASS (VST2 = known §8b harness AV, unchanged in kind).
+
+**Renames (describe behavior; all were decompile-address placeholders):**
+- `sub_C0036FB0` → `pan_attenuation_shift` — pan-depth component (1..16) → output right-shift amount
+  (`voice_set_panpot` / `field_30/34`). `inline` now on the definition only, not the declaration.
+- `sub_C0036FE0` → `step_pitch_lfo` — vibrato/pitch-mod LFO: glides applied offset `field_4C` toward ROM target
+  `field_48` at rate `field_4A`; loads next LFO turning point on arrival (ProcessPhase cases 1&5).
+- `sub_C0037140` → `step_amp_envelope` — ADSR: glides `field_52` toward `v_vol` at rate `field_50`, latches next
+  stage via `voice_set_flags2`, derives log gain `field_28` (curve table) and per-sample gain `field_38`
+  (every ProcessPhase quantum — the engine's time base).
+
 ## 9. Risks
 
 | Risk | Likelihood | Mitigation |

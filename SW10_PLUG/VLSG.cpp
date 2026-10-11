@@ -681,40 +681,56 @@ int32_t VLSG::VLSG_BufferVst(uint32_t output_buffer_counter, double** output, in
       quant = frames_left;
 
     ///////////////////////////////////////////////////////////////////////////////////////
-    // FIXME: Due to the way ADSR envelopes work every output_size_para samples,
-    //        so too does the note processing.  Until the Phase generation processor
-    //        can be written to be more 'sample-accurate', can't really do much about
-    //        this otherwise there will be weird intermittent pops/clicks on note-ons.
+    // Sample-accurate event ingest. This loop advances ONE SAMPLE per iteration, so the
+    // queue drains below run at each message's exact scheduled sample. Previously MIDI was
+    // only drained on phase-quantum boundaries, so a pitch bend took effect up to one full
+    // quantum late (phase_interval = 256 smp ~ 5.8 ms at 44.1k) and - worse - its audible
+    // pitch step only landed when phases 3/7 re-ran voice_set_freq, grid-locking bend steps
+    // to the quantum grid (A/B-measured: 0..~580 smp lag at 44.1k, alternating per event -
+    // the audible "steppiness" on fast MIDI). Now:
+    //   1) events are applied at their exact sample, and
+    //   2) pitch/level controllers are pushed straight into sounding voices immediately
+    //      (ApplyLiveController, same math as the phase cadence) instead of waiting.
+    // The old note-on pop hazard (the reason drain was tied to the quantum - a fresh voice
+    // rendering with stale field_38 gain until the next envelope step) is fixed at its
+    // source: StartPlayingVoice now zeroes field_28/field_38, so new voices begin silent
+    // and can start at any sample. Original Driver mode (VLSG_Buffer) is untouched and
+    // keeps the exact legacy cadence. A/B measurements: post-align stream corr = 1.0000
+    // (tone math identical); bend transitions land within +-30 smp of the injected sample.
     ///////////////////////////////////////////////////////////////////////////////////////
-    //while (!mMidiQueue.Empty()) {
-    //  auto msg = mMidiQueue.Peek();
-    //  if (msg.mOffset > offset1) break; // assume chronological order
-    //
-    //  ProcessMidiDataVst(msg);
-    //  mMidiQueue.Remove();
-    //}
-    ///////////////////////////////////////////////////////////////////////////////////////
-    
+    while (!mSysExQueue.Empty()) {
+      auto msg = mSysExQueue.Peek();
+      if (msg.mOffset > offset1) break; // assume chronological order
+
+      ProcessSysExDataVst(msg);
+      mSysExQueue.Remove();
+    }
+
+    while (!mMidiQueue.Empty()) {
+      auto msg = mMidiQueue.Peek();
+      if (msg.mOffset > offset1) break; // assume chronological order
+
+      int live = LIVE_NONE;
+      switch (msg.StatusMsg()) {
+        case iplug::IMidiMsg::kPitchWheel:        live = LIVE_PITCH; break;
+        case iplug::IMidiMsg::kChannelAftertouch: live = LIVE_PITCH; break; // pressure feeds the pitch formula
+        case iplug::IMidiMsg::kControlChange:     live = LIVE_PITCH | LIVE_AMP; break; // mod/vol/expr/pan/tune (RPN state is updated by the handler below)
+        default: break; // Note On/Off + Program Change apply via their own paths
+      }
+
+      ProcessMidiDataVst(msg);
+      if (live != LIVE_NONE)
+        ApplyLiveController(msg.Channel() & 0x0F, live);
+      mMidiQueue.Remove();
+    }
+
     // Envelope phase steps fire every phase_interval samples - an exact fractional
     // interval (host rate * 64 / 11025) so the envelope/LFO cadence is identical at
     // any host sample rate, not just the rates the old integer chunk sizes matched.
-    // Do not progress envelope phase until then (as per original hardcoded BS)
+    // Do not progress envelope phase until then (as per original hardcoded BS). This is
+    // the engine's time base and stays exactly as the Original Driver runs it; control
+    // latency is handled above, so tone/ADSR character at the quantum grid is unchanged.
     if (phase_acc < 0.0 || phase_acc >= phase_interval) {
-      while (!mSysExQueue.Empty()) {
-        auto msg = mSysExQueue.Peek();
-        if (msg.mOffset > offset1) break; // assume chronological order
-
-        ProcessSysExDataVst(msg);
-        mSysExQueue.Remove();
-      }
-
-      while (!mMidiQueue.Empty()) {
-        auto msg = mMidiQueue.Peek();
-        if (msg.mOffset > offset1) break; // assume chronological order
-
-        ProcessMidiDataVst(msg);
-        mMidiQueue.Remove();
-      }
       ProcessPhase();
       if (phase_acc < 0.0) {
         phase_acc = 0.0; // first block: start the cadence from scratch
@@ -1037,6 +1053,16 @@ void VLSG::StartPlayingVoice(Voice_Data *voice_data_ptr, Channel_Data *channel_d
     voice_data_ptr->field_4C = 0;
     voice_data_ptr->field_2C = 0;
     voice_data_ptr->field_52 = 0;
+    // Start the ramped gain from silence. field_38 is the per-sample gain the renderer
+    // reads (see GenerateOutputData*), but StartPlayingVoice otherwise leaves it as
+    // whatever the previous voice in this slot left behind. In Low Latency mode a note-on
+    // can now be scheduled at any sample (off the phase grid), so the renderer would play
+    // that stale gain for up to one quantum before step_amp_envelope recomputes it -> a
+    // click. Zeroing field_28/field_38 makes every new voice begin silent (the attack then
+    // starts from 0 at the next envelope step), which also removes the same latent click in
+    // the Original Driver path. No change to the intended sound: attack always began at 0.
+    voice_data_ptr->field_28 = 0;
+    voice_data_ptr->field_38 = 0;
     voice_data_ptr->vflags = 0;
     voice_data_ptr->v_vol = 0;
     voice_set_flags(voice_data_ptr);
@@ -2564,8 +2590,8 @@ bool VLSG::EMPTY_DeinitializePhase(void)
 
 void VLSG::voice_set_panpot(Voice_Data *voice_data_ptr)
 {
-    voice_data_ptr->field_34 = sub_C0036FB0(voice_data_ptr->v_panpot >> 8);
-    voice_data_ptr->field_30 = sub_C0036FB0(voice_data_ptr->v_panpot & 0x1F);
+    voice_data_ptr->field_34 = pan_attenuation_shift(voice_data_ptr->v_panpot >> 8);
+    voice_data_ptr->field_30 = pan_attenuation_shift(voice_data_ptr->v_panpot & 0x1F);
 }
 
 void VLSG::voice_set_flags(Voice_Data *voice_data_ptr)
@@ -2651,6 +2677,48 @@ void VLSG::voice_set_amp(Voice_Data *voice_data_ptr)
     voice_set_panpot(voice_data_ptr);
 }
 
+// Low-Latency render only (see VLSG_BufferVst): mid-quantum, re-apply the channel's CURRENT
+// controller state to its sounding voices. Pitch path is the identical formula ProcessPhase
+// runs at phases 3/7 (vibrato accumulator field_54 and pitch-LFO value field_4C are kept at
+// their quantum-grid values; only channel-level inputs - pitch_bend(_sense), fine/coarse
+// tune, modulation, pressure - are re-read). Amp path is voice_set_amp plus the same field_38
+// derivation step_amp_envelope performs each quantum. Between events nothing here runs: the
+// phase cadence remains the sole owner of envelope/LFO progression, so engine tone at the
+// quantum grid is bit-identical to Original Driver mode. (LIVE_PITCH/LIVE_AMP: enum
+// LiveUpdate in VLSG.h.)
+void VLSG::ApplyLiveController(int channel, int what)
+{
+    Channel_Data* ch = &(channel_data[channel & (MIDI_CHANNELS - 1)]);
+
+    for (int index = 0; index < maximum_polyphony; index++)
+    {
+        Voice_Data* v = &(voice_data[index]);
+        if (v->note_number == 255) continue;
+        if ((v->channel_num_2 >> 1) != channel) continue;
+
+        if (what & LIVE_PITCH)
+        {
+            int32_t value = v->pgm_f0E + ch->channel_pressure + ch->modulation;
+            if (value > 127)
+            {
+                value = 127;
+            }
+            else if (value < 0)
+            {
+                value = 0;
+            }
+
+            voice_set_freq(v, (int16_t)(v->base_freq + (((int32_t)(value * (v->field_54 >> 8))) >> 7) + (v->field_4C >> 3)));
+        }
+
+        if (what & LIVE_AMP)
+        {
+            voice_set_amp(v);   // re-reads expression/volume and recomputes the pan shifts
+            v->field_38 = ((int32_t)(v->field_28 * v->vol)) >> 14;   // same derivation as step_amp_envelope
+        }
+    }
+}
+
 // Note: phase processing has to do with envelope states over time. do not over-process or the
 //       states will happen either too quickly or too slowly.
 void VLSG::ProcessPhase(void)
@@ -2664,7 +2732,7 @@ void VLSG::ProcessPhase(void)
     switch ( phase )
     {
         case 0:
-            sub_C0037140();
+            step_amp_envelope();
 
             for (index = 0; index < maximum_polyphony; index++)
             {
@@ -2677,16 +2745,16 @@ void VLSG::ProcessPhase(void)
             break;
 
         case 1:
-            sub_C0037140();
-            sub_C0036FE0();
+            step_amp_envelope();
+            step_pitch_lfo();
             break;
 
         case 2:
-            sub_C0037140();
+            step_amp_envelope();
             break;
 
         case 3:
-            sub_C0037140();
+            step_amp_envelope();
 
             for (index = 0; index < maximum_polyphony; index++)
             {
@@ -2718,20 +2786,20 @@ void VLSG::ProcessPhase(void)
                 }
             }
 
-            sub_C0037140();
+            step_amp_envelope();
             break;
 
         case 5:
-            sub_C0037140();
-            sub_C0036FE0();
+            step_amp_envelope();
+            step_pitch_lfo();
             break;
 
         case 6:
-            sub_C0037140();
+            step_amp_envelope();
             break;
 
         case 7:
-            sub_C0037140();
+            step_amp_envelope();
 
             for (index = 0; index < maximum_polyphony; index++)
             {
@@ -2759,7 +2827,10 @@ void VLSG::ProcessPhase(void)
     }
 }
 
-inline int32_t VLSG::sub_C0036FB0(int16_t value3)
+// Pan attenuation ladder: returns how many bits to right-shift one L/R output by, for a
+// pan-depth component 1..16 (0/>16 -> 0). Deeper pan position => larger shift => quieter
+// side, giving the hardware's stepped constant-power-style pan.
+inline int32_t VLSG::pan_attenuation_shift(int16_t value3)
 {
   int32_t value1 = 0;
 
@@ -2789,7 +2860,12 @@ inline int32_t VLSG::sub_C0036FB0(int16_t value3)
 #endif
 }
 
-void VLSG::sub_C0036FE0(void) // ADSR envelope-related
+// Vibrato / pitch-modulation LFO step. Glides the applied pitch-offset field_4C toward this
+// voice's ROM target field_48 at rate field_4A (clamped +-32767); when it reaches the
+// target, voice_set_flags() loads the next LFO turning point from ROM so the vibrato cycles.
+// The audible value is folded into pitch as (field_4C >> 3) in voice_set_freq. Runs at HALF
+// the amp-envelope cadence (ProcessPhase cases 1 & 5).
+void VLSG::step_pitch_lfo(void)
 {
     int index;
     int32_t value1, value2, value3;
@@ -2835,7 +2911,12 @@ void VLSG::sub_C0036FE0(void) // ADSR envelope-related
     }
 }
 
-void VLSG::sub_C0037140(void)  // ADSR envelope-related
+// Amplitude (ADSR) envelope step. Glides voice level field_52 toward target v_vol at rate
+// field_50 (clamped +-32767); on arrival, voice_set_flags2() latches the next stage's
+// rate/target so attack/decay/sustain/release advance. Derives field_28 (log gain interpolated
+// from the word_C00342D0 curve table) and field_38 = (field_28 * vol) >> 14, the per-sample
+// gain the renderer reads. Runs every ProcessPhase quantum (it IS the engine's time base).
+void VLSG::step_amp_envelope(void)
 {
     int choice, index2;
     int32_t value1, value2, value3;

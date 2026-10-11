@@ -339,9 +339,25 @@ private:
   void voice_set_flags(Voice_Data* voice_data_ptr);
   void voice_set_flags2(Voice_Data* voice_data_ptr);
   void voice_set_amp(Voice_Data* voice_data_ptr);
-  inline int32_t sub_C0036FB0(int16_t value3);
-  void sub_C0036FE0(void);
-  void sub_C0037140(void);
+  // Pan position (0..16 depth of one L/R component) -> output right-shift amount
+  // (constant-power-ish attenuation ladder; larger value = more attenuated side).
+  int32_t pan_attenuation_shift(int16_t value3);
+  // Advance the pitch-modulation LFO (vibrato) one step: glide voice field_4C toward
+  // the ROM target field_48 at rate field_4A; on arrival load the next LFO target.
+  void step_pitch_lfo(void);
+  // Advance the amplitude (ADSR) envelope one step: glide voice field_52 toward target
+  // v_vol at rate field_50; on arrival load the next stage's rate/level. Derives field_28
+  // (log gain via curve table) and field_38 (final per-sample gain).
+  void step_amp_envelope(void);
+
+  // Low-Latency render only: push a just-arrived channel controller straight into the
+  // channel's sounding voices at THIS sample (reusing voice_set_freq / voice_set_amp +
+  // the exact field_38 math ProcessPhase uses) so pitch/level track at sample resolution
+  // instead of stepping once per phase quantum. No-op for the Original Driver path, which
+  // never calls it (its cadence is unchanged). Reuses the same math => tone identical,
+  // only control latency becomes sample-accurate.
+  void ApplyLiveController(int channel, int what);
+  enum LiveUpdate { LIVE_NONE = 0, LIVE_PITCH = 1, LIVE_AMP = 2 };
   bool InitializeStructures(void);
   bool EMPTY_DeinitializeStructures(void);
   void ResetAllControllers(Channel_Data* channel_data_ptr);
